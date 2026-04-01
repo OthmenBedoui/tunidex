@@ -8,7 +8,7 @@ import Cart from './pages/Cart';
 import AiTools from './pages/AiTools';
 import CategoryPage from './pages/CategoryPage';
 import { AdminDashboard, UserDashboard } from './pages/Dashboards';
-import { User, UserRole, Listing, Order, SubscriptionTier, Category } from './types';
+import { User, UserRole, Listing, Order, OrderStatus, SubscriptionTier, Category } from './types';
 import { api } from './services/api';
 import * as LucideIcons from 'lucide-react';
 
@@ -31,15 +31,21 @@ const App: React.FC = () => {
     const token = localStorage.getItem('token');
     if (token) api.getCurrentUser().then(setUser).catch(() => { localStorage.removeItem('token'); setUser(INITIAL_GUEST); });
     
-    api.getListings().then(data => { if(data.length > 0) setListings(data); }).catch(console.error);
-    api.getCategories().then(data => { if(data.length > 0) setCategories(data); }).catch(console.error);
+    api.getListings().then(setListings).catch(console.error);
+    api.getCategories().then(setCategories).catch(console.error);
     
     api.getCart().then(items => { if(items.length > 0) setCartCount(items.reduce((acc, item) => acc + item.quantity, 0)); }).catch(() => {});
-  }, []);
+    
+    if (user.role === UserRole.ADMIN || user.role === UserRole.AGENT) {
+        api.getAllOrders().then(setOrders).catch(console.error);
+    } else if (user.id !== 'guest') {
+        api.getMyOrders().then(setOrders).catch(console.error);
+    }
+  }, [user.id, user.role]);
 
   const refreshData = () => {
-      api.getListings().then(data => { if(data.length > 0) setListings(data); }).catch(console.error);
-      api.getCategories().then(data => { if(data.length > 0) setCategories(data); }).catch(console.error);
+      api.getListings().then(setListings).catch(console.error);
+      api.getCategories().then(setCategories).catch(console.error);
   };
 
   const navigateTo = (page: string, slug?: string) => {
@@ -61,7 +67,7 @@ const App: React.FC = () => {
         await api.addToCart(listing.id); 
         setCartCount(prev => prev + 1);
         showNotification(`${listing.title} ajouté au panier`);
-    } catch (e) { 
+    } catch { 
         setCartCount(prev => prev + 1);
         showNotification(`${listing.title} ajouté (Mode Démo)`);
     }
@@ -71,10 +77,21 @@ const App: React.FC = () => {
     setCartCount(count);
   };
 
-  const handleCreateListing = async (listing: any) => {
-    try { await api.createListing(listing); refreshData(); showNotification("Produit créé avec succès !"); } catch (e) { alert("Erreur"); }
+  const handleCreateListing = async (listing: Partial<Listing>) => {
+    try { await api.createListing(listing); refreshData(); showNotification("Produit créé avec succès !"); } catch { alert("Erreur"); }
   };
   const handleViewProduct = (l: Listing) => { setSelectedProduct(l); navigateTo('product'); };
+
+  const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus) => {
+    try {
+        await api.updateOrderStatus(orderId, status);
+        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+        showNotification("Statut de la commande mis à jour");
+    } catch (err) {
+        console.error(err);
+        showNotification("Erreur lors de la mise à jour");
+    }
+  };
 
   const renderContent = () => {
     switch (currentPage) {
@@ -89,11 +106,11 @@ const App: React.FC = () => {
         if(cat.slug === 'ai-tools') return <AiTools listings={listings} onViewProduct={handleViewProduct} navigateTo={navigateTo} />;
         
         // Robust icon lookup
-        const icons: any = LucideIcons;
+        const icons: Record<string, React.ComponentType<{ size?: number; className?: string }>> = LucideIcons as unknown as Record<string, React.ComponentType<{ size?: number; className?: string }>>;
         const IconComponent = icons[cat.icon] || icons[cat.icon.trim()] || icons.Package;
         
         return <CategoryPage 
-            type={cat.id as any} 
+            type={cat.id} 
             categoryId={cat.id}
             title={cat.name}
             subtitle={cat.description || ''}
@@ -118,7 +135,7 @@ const App: React.FC = () => {
                         {selectedProduct.gallery && selectedProduct.gallery.length > 0 && (
                             <div className="grid grid-cols-4 gap-2">
                                 {selectedProduct.gallery.map((img, i) => (
-                                    <img key={i} src={img} className="rounded-lg border cursor-pointer hover:border-indigo-500 hover:opacity-80 transition" onClick={(e) => (e.target as any).parentNode.previousSibling.src = img} />
+                                    <img key={i} src={img} className="rounded-lg border cursor-pointer hover:border-indigo-500 hover:opacity-80 transition" onClick={(e) => ((e.target as HTMLImageElement).parentNode?.previousSibling as HTMLImageElement).src = img} />
                                 ))}
                             </div>
                         )}
@@ -134,10 +151,19 @@ const App: React.FC = () => {
                         <div className="prose prose-slate mb-8 text-slate-600">{selectedProduct.description}</div>
                         
                         <div className="mt-auto space-y-4">
+                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center justify-between">
+                                <div className="flex items-center text-slate-600">
+                                    <LucideIcons.Clock size={18} className="mr-2 text-indigo-500" />
+                                    <span className="text-sm font-medium">Disponibilité:</span>
+                                </div>
+                                <span className={`text-sm font-bold ${selectedProduct.isInstant ? 'text-green-600' : 'text-amber-600'}`}>
+                                    {selectedProduct.isInstant ? 'Instantanée' : selectedProduct.preparationTime}
+                                </span>
+                            </div>
                             <button onClick={() => handleAddToCart(selectedProduct)} className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all transform hover:-translate-y-1 text-lg">
                                 Ajouter au Panier
                             </button>
-                            <p className="text-center text-xs text-slate-400">Livraison estimée: {selectedProduct.deliveryTimeHours === 0 ? 'Immédiate' : `${selectedProduct.deliveryTimeHours} heures`}</p>
+                            <p className="text-center text-xs text-slate-400">Livraison estimée: {selectedProduct.isInstant ? 'Immédiate' : selectedProduct.preparationTime}</p>
                         </div>
                     </div>
                 </div>
@@ -145,7 +171,7 @@ const App: React.FC = () => {
         );
       }
       case 'admin-dashboard':
-        return <AdminDashboard user={user} orders={orders} listings={listings} categories={categories} onUpdateStatus={() => {}} onCreateListing={handleCreateListing} onRefreshCategories={refreshData} />;
+        return <AdminDashboard user={user} orders={orders} listings={listings} categories={categories} onUpdateStatus={handleUpdateOrderStatus} onCreateListing={handleCreateListing} onRefreshCategories={refreshData} />;
       
       case 'user-dashboard': return <UserDashboard user={user} orders={orders} />;
       default: return <Home listings={listings} categories={categories} onViewProduct={handleViewProduct} navigateTo={navigateTo} />;

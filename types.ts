@@ -77,6 +77,12 @@ export interface Listing {
   game?: string; // Keep for legacy/search (e.g. "Valorant")
   stock: number;
   deliveryTimeHours: number;
+  isInstant: boolean;
+  preparationTime?: string;
+  metaTitle?: string;
+  metaDesc?: string;
+  keywords?: string;
+  salesCount?: number;
 }
 
 export interface CartItem {

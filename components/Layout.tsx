@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { ShoppingCart, Search, Menu, User as UserIcon, LogOut, LayoutDashboard, LogIn, CheckCircle, X, HelpCircle } from 'lucide-react';
+import { ShoppingCart, Search, Menu, User as UserIcon, LogOut, LayoutDashboard, LogIn, CheckCircle, X } from 'lucide-react';
 import { User, UserRole, Category } from '../types';
 import * as LucideIcons from 'lucide-react';
 
@@ -18,7 +18,7 @@ interface LayoutProps {
 
 // Helper to render icon by string name with robust lookup
 const DynamicIcon = ({ name, className }: { name: string, className?: string }) => {
-  const icons: any = LucideIcons;
+  const icons: Record<string, React.ComponentType<{ size?: number; className?: string }>> = LucideIcons as unknown as Record<string, React.ComponentType<{ size?: number; className?: string }>>;
   // Fallback to CircleHelp if icon name is invalid or not found
   const IconComponent = icons[name] || icons[name.trim()] || icons.HelpCircle;
   return <IconComponent size={16} className={className} />;

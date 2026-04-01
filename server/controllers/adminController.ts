@@ -24,14 +24,14 @@ export const getStats = async (_req: Request, res: Response) => {
 export const getAllUsers = async (_req: Request, res: Response) => {
     if (!prisma?.user) return res.status(500).json({ error: 'Prisma not initialized' });
     const users = await prisma.user.findMany({ orderBy: { createdAt: 'desc' } });
-    res.json(users.map((u: any) => { const { password: _, ...r } = u; return r; }));
+    res.json(users.map((u: { password?: string }) => { const r = { ...u }; delete r.password; return r; }));
 };
 
 export const updateUserRole = async (req: Request, res: Response) => {
     if (!prisma?.user) return res.status(500).json({ error: 'Prisma not initialized' });
     const user = await prisma.user.update({ where: { id: req.params.id }, data: { role: req.body.role } });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    // @ts-expect-error - password exists on user
-    const { password: _, ...u } = user;
+    const u = { ...user } as { password?: string };
+    delete u.password;
     res.json(u);
 };

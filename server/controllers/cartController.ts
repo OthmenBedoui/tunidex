@@ -59,9 +59,9 @@ export const checkout = async (req: AuthRequest, res: Response) => {
     if (!prisma?.cart) return res.status(500).json({ error: 'Prisma not initialized' });
     const cart = await prisma.cart.findUnique({ where: { userId: req.user?.id }, include: { items: { include: { listing: true } } } });
     if (!cart || cart.items.length === 0) return res.status(400).json({ error: "Vide" });
-    const total = cart.items.reduce((s: number, i: any) => s + (i.listing.price * i.quantity), 0);
+    const total = cart.items.reduce((s: number, i: { listing: { price: number }, quantity: number }) => s + (i.listing.price * i.quantity), 0);
     const order = await prisma.order.create({
-        data: { userId: req.user?.id, amount: total, items: { create: cart.items.map((i: any) => ({ listingId: i.listingId, quantity: i.quantity, priceSnapshot: i.listing.price, titleSnapshot: i.listing.title })) } }, include: { items: true }
+        data: { userId: req.user?.id, amount: total, items: { create: cart.items.map((i: { listingId: string, quantity: number, listing: { price: number, title: string } }) => ({ listingId: i.listingId, quantity: i.quantity, priceSnapshot: i.listing.price, titleSnapshot: i.listing.title })) } }, include: { items: true }
     });
     // Record Sale logic could go here
     await prisma.cartItem.deleteMany({ where: { cartId: cart.id } });

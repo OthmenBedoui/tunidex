@@ -40,8 +40,8 @@ export const login = async (req: Request, res: Response) => {
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !await bcrypt.compare(password, user.password)) return res.status(400).json({ error: 'Invalide' });
   const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET);
-  // @ts-expect-error - password exists on user
-  const { password: _, ...u } = user;
+  const u = { ...user } as { password?: string };
+  delete u.password;
   res.json({ token, user: u });
 };
 
@@ -74,8 +74,8 @@ export const register = async (req: Request, res: Response) => {
   if (await prisma.user.findUnique({ where: { email } })) return res.status(400).json({ error: 'Email pris' });
   const user = await prisma.user.create({ data: { email, password: await bcrypt.hash(password, 10), username, role: 'USER', avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}` }});
   const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET);
-  // @ts-expect-error - password exists on user
-  const { password: _, ...u } = user;
+  const u = { ...user } as { password?: string };
+  delete u.password;
   res.json({ token, user: u });
 };
 
@@ -91,11 +91,11 @@ export const register = async (req: Request, res: Response) => {
  *       200:
  *         description: User profile
  */
-export const getMe = async (req: Request & { user?: any }, res: Response) => {
+export const getMe = async (req: Request & { user?: { id: string; role: string } }, res: Response) => {
   if (!prisma?.user) return res.status(500).json({ error: 'Prisma not initialized' });
   const user = await prisma.user.findUnique({ where: { id: req.user?.id } });
   if (!user) return res.status(404).json({ error: 'User not found' });
-  // @ts-expect-error - password exists on user
-  const { password: _, ...u } = user;
+  const u = { ...user } as { password?: string };
+  delete u.password;
   res.json(u);
 };

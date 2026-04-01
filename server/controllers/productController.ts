@@ -25,7 +25,7 @@ import prisma from '../prisma.js';
 export const getListings = async (_req: Request, res: Response) => {
   if (!prisma?.listing) return res.status(500).json({ error: 'Prisma not initialized' });
   const listings = await prisma.listing.findMany({ include: { category: true, subCategory: true }, orderBy: { createdAt: 'desc' } });
-  res.json(listings.map((l: any) => ({ ...l, gallery: JSON.parse(l.gallery || '[]') })));
+  res.json(listings.map((l: { gallery: string | null }) => ({ ...l, gallery: JSON.parse(l.gallery || '[]') })));
 };
 
 /**
@@ -41,7 +41,7 @@ export const getListings = async (_req: Request, res: Response) => {
  *         description: Listing created
  */
 export const createListing = async (req: Request, res: Response) => {
-  const { metaTitle, metaDesc, keywords, gallery, ...data } = req.body;
+  const { metaTitle, metaDesc, keywords, gallery, isInstant, preparationTime, ...data } = req.body;
   if (!prisma?.listing) return res.status(500).json({ error: 'Prisma not initialized' });
   const listing = await prisma.listing.create({
     data: { 
@@ -49,6 +49,8 @@ export const createListing = async (req: Request, res: Response) => {
       metaTitle, 
       metaDesc, 
       keywords, 
+      isInstant: isInstant === undefined ? true : Boolean(isInstant),
+      preparationTime: preparationTime || null,
       gallery: Array.isArray(gallery) ? JSON.stringify(gallery) : (gallery || '[]'),
       stock: Number(data.stock), 
       price: Number(data.price), 
@@ -70,6 +72,12 @@ export const getCategories = async (_req: Request, res: Response) => {
 export const createCategory = async (req: Request, res: Response) => { 
     if (!prisma?.category) return res.status(500).json({ error: 'Prisma not initialized' });
     res.json(await prisma.category.create({ data: req.body })); 
+};
+
+export const updateCategory = async (req: Request, res: Response) => {
+    if (!prisma?.category) return res.status(500).json({ error: 'Prisma not initialized' });
+    const { id } = req.params;
+    res.json(await prisma.category.update({ where: { id }, data: req.body }));
 };
 
 export const deleteCategory = async (req: Request, res: Response) => { 

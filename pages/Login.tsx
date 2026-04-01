@@ -8,7 +8,7 @@ interface LoginProps {
   navigateTo: (page: string) => void;
 }
 
-const Login: React.FC<LoginProps> = ({ onLoginSuccess, navigateTo }) => {
+const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,12 +24,12 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, navigateTo }) => {
     try {
       let data;
       if (isRegistering) {
-        data = await api.register(email, password, username);
+        data = await api.register(email, password, username) as { token: string; user: UserType };
       } else {
-        data = await api.login(email, password);
+        data = await api.login(email, password) as { token: string; user: UserType };
       }
-      onLoginSuccess((data as any).token, (data as any).user);
-    } catch (err) {
+      onLoginSuccess(data.token, data.user);
+    } catch {
       setError(isRegistering ? "Échec de l'inscription. L'email existe peut-être déjà." : "Identifiants invalides.");
     } finally {
       setIsLoading(false);
@@ -147,9 +147,9 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, navigateTo }) => {
                 setIsLoading(true);
                 setError('');
                 try {
-                  const data = await api.login('johnson67377@gmail.com', '123456');
-                  onLoginSuccess((data as any).token, (data as any).user);
-                } catch (err) {
+                  const data = await api.login('johnson67377@gmail.com', '123456') as { token: string; user: UserType };
+                  onLoginSuccess(data.token, data.user);
+                } catch {
                   setError("Échec de la connexion admin rapide.");
                 } finally {
                   setIsLoading(false);

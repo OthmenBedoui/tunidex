@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Listing, Category } from '../types';
-import { ArrowRight, Zap, Star, Shield, Package } from 'lucide-react';
+import { ArrowRight, Zap, Star, Shield } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 
 interface HomeProps {
@@ -12,7 +12,7 @@ interface HomeProps {
 }
 
 const DynamicIcon = ({ name, className }: { name: string, className?: string }) => {
-  const icons: any = LucideIcons;
+  const icons: Record<string, React.ComponentType<{ size?: number; className?: string }>> = LucideIcons as unknown as Record<string, React.ComponentType<{ size?: number; className?: string }>>;
   const IconComponent = icons[name] || icons[name.trim()] || icons.Package;
   return <IconComponent size={24} className={className} />;
 };
@@ -102,6 +102,11 @@ const Home: React.FC<HomeProps> = ({ listings, categories, onViewProduct, naviga
               <div className="relative h-48 overflow-hidden bg-slate-100">
                 <img src={listing.imageUrl} alt={listing.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                 <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold uppercase tracking-wider">{listing.game}</div>
+                {listing.isInstant && (
+                  <div className="absolute top-3 right-3 bg-green-500/90 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold flex items-center shadow-sm">
+                    <Zap size={10} className="mr-1 fill-current" /> Instant
+                  </div>
+                )}
                 {listing.logoUrl && <img src={listing.logoUrl} className="absolute bottom-2 right-2 w-8 h-8 rounded bg-white p-1 shadow-sm" />}
               </div>
               <div className="p-5 flex-1 flex flex-col">

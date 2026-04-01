@@ -1,4 +1,4 @@
-import { Listing, Order, User, UserRole, OrderStatus, SubscriptionTier, Category, SubCategory, CartItem } from '../types';
+import { Listing, Order, OrderStatus, User, UserRole, SubscriptionTier, Category, SubCategory, CartItem } from '../types';
 
 const API_URL = '/api';
 
@@ -41,6 +41,7 @@ export const api = {
   // Categories
   getCategories: () => fetchWithFallback<Category[]>(`${API_URL}/categories`, undefined, []),
   createCategory: (data: Partial<Category>) => fetchWithFallback(`${API_URL}/categories`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }),
+  updateCategory: (id: string, data: Partial<Category>) => fetchWithFallback(`${API_URL}/categories/${id}`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify(data) }),
   deleteCategory: (id: string) => fetchWithFallback(`${API_URL}/categories/${id}`, { method: 'DELETE', headers: getHeaders() }),
   
   createSubCategory: (data: Partial<SubCategory>) => fetchWithFallback(`${API_URL}/subcategories`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }),
@@ -54,13 +55,14 @@ export const api = {
   // Orders
   getMyOrders: () => fetchWithFallback<Order[]>(`${API_URL}/orders/my`, { headers: getHeaders() }, []),
   getAllOrders: () => fetchWithFallback<Order[]>(`${API_URL}/orders/admin`, { headers: getHeaders() }, []),
+  updateOrderStatus: (orderId: string, status: OrderStatus) => fetchWithFallback(`${API_URL}/orders/${orderId}/status`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify({status}) }),
   
   // Admin Users
   getAllUsers: () => fetchWithFallback<User[]>(`${API_URL}/users`, { headers: getHeaders() }, []),
   updateUserRole: (userId: string, role: UserRole) => fetchWithFallback(`${API_URL}/users/${userId}/role`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify({role}) }),
 
   // Analytics
-  getDailyStats: () => fetchWithFallback<any[]>(`${API_URL}/admin/stats`, { headers: getHeaders() }, []),
+  getDailyStats: () => fetchWithFallback<{ dailyStats: { date: string, sales: number, orders: number }[], totalSales: number, totalOrders: number, totalUsers: number, topProducts: Listing[] }>(`${API_URL}/admin/stats`, { headers: getHeaders() }, { dailyStats: [], totalSales: 0, totalOrders: 0, totalUsers: 0, topProducts: [] }),
 
   // AI
   generateDescription: (game: string, itemType: string, keyFeatures: string) => 

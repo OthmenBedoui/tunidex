@@ -68,6 +68,8 @@ model Listing {
   game              String?
   stock             Int          @default(1)
   deliveryTimeHours Int          @default(24)
+  isInstant         Boolean      @default(true)
+  preparationTime   String?      // e.g., "2-3 jours", "Immédiat"
   salesCount        Int          @default(0)
   metaTitle         String?
   metaDesc          String?

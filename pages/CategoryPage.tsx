@@ -1,11 +1,11 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Listing, SubCategory } from '../types';
-import { Star, ArrowLeft, Filter, Search, X, CheckCircle, Clock, ShoppingCart, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, Filter, Search, LayoutGrid, Zap } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 
 interface CategoryPageProps {
   categoryId: string; 
-  type: any;
+  type: string;
   title: string;
   subtitle: string;
   heroGradient: string;
@@ -18,7 +18,7 @@ interface CategoryPageProps {
 }
 
 const DynamicIcon = ({ name, className }: { name: string, className?: string }) => {
-  const icons: any = LucideIcons;
+  const icons: Record<string, React.ComponentType<{ size?: number; className?: string }>> = LucideIcons as unknown as Record<string, React.ComponentType<{ size?: number; className?: string }>>;
   const IconComponent = icons[name] || icons[name.trim()] || icons.LayoutGrid;
   return <IconComponent size={24} className={className} />;
 };
@@ -110,6 +110,11 @@ const CategoryPage: React.FC<CategoryPageProps> = ({
                 <div className="relative h-48 overflow-hidden bg-slate-100">
                 <img src={listing.imageUrl} alt={listing.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                 <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold uppercase">{listing.game}</div>
+                {listing.isInstant && (
+                  <div className="absolute top-3 right-3 bg-green-500/90 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-md font-bold flex items-center shadow-sm">
+                    <Zap size={10} className="mr-1 fill-current" /> Instant
+                  </div>
+                )}
                 {listing.logoUrl && <img src={listing.logoUrl} className="absolute bottom-2 right-2 w-8 h-8 rounded bg-white p-1 shadow" />}
                 </div>
                 <div className="p-5 flex-1 flex flex-col">

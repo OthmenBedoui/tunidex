@@ -13,17 +13,16 @@ interface CartProps {
 const MOCK_CART_ITEMS: CartItem[] = [
     {
         id: 'c1', listingId: '1', quantity: 1, 
-        listing: { id: '1', title: 'Netflix Premium 1 Mois', price: 12.00, game: 'Netflix', categoryId: 'cat_streaming', imageUrl: 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85', description: '4K', stock: 50, deliveryTimeHours: 0, gallery: [] }
+        listing: { id: '1', title: 'Netflix Premium 1 Mois', price: 12.00, game: 'Netflix', categoryId: 'cat_streaming', imageUrl: 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85', description: '4K', stock: 50, deliveryTimeHours: 0, gallery: [], isInstant: true, preparationTime: 'Immédiat' }
     },
     {
         id: 'c2', listingId: '2', quantity: 2, 
-        listing: { id: '2', title: 'FIFA 25 - 100K Coins', price: 25.00, game: 'EA FC 25', categoryId: 'cat_coins', imageUrl: 'https://images.unsplash.com/photo-1493711662062-fa541adb3fc8', description: 'Coins', stock: 100, deliveryTimeHours: 1, gallery: [] }
+        listing: { id: '2', title: 'FIFA 25 - 100K Coins', price: 25.00, game: 'EA FC 25', categoryId: 'cat_coins', imageUrl: 'https://images.unsplash.com/photo-1493711662062-fa541adb3fc8', description: 'Coins', stock: 100, deliveryTimeHours: 1, gallery: [], isInstant: false, preparationTime: '1-2 heures' }
     }
 ];
 
 const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate }) => {
   const [items, setItems] = useState<CartItem[]>(MOCK_CART_ITEMS);
-  const [isLoading, setIsLoading] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('edinar');
 
@@ -42,7 +41,7 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate }) => {
     const newCount = newItems.reduce((acc, item) => acc + item.quantity, 0);
     onCartUpdate(newCount);
 
-    try { await api.removeFromCart(id); } catch(e) {}
+    try { await api.removeFromCart(id); } catch { /* ignore */ }
   };
 
   const handleCheckout = async () => {
@@ -56,8 +55,6 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate }) => {
   };
 
   const total = items.reduce((sum, item) => sum + (item.listing.price * item.quantity), 0);
-
-  if (isLoading) return <div className="p-12 text-center text-slate-500">Chargement...</div>;
 
   if (items.length === 0) {
     return (

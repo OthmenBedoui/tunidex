@@ -8,7 +8,7 @@ interface AiToolsProps {
   navigateTo: (page: string) => void;
 }
 
-const AiTools: React.FC<AiToolsProps> = ({ listings, onViewProduct, navigateTo }) => {
+const AiTools: React.FC<AiToolsProps> = ({ listings, onViewProduct }) => {
   // Filter only AI Tools
   const aiListings = listings.filter(l => l.category?.slug === 'ai-tools');
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, Crown, Zap, Shield, CreditCard, User, MapPin, Phone } from 'lucide-react';
+import { Check, Crown, Zap, User, MapPin, Phone } from 'lucide-react';
 import { SubscriptionTier, User as UserType, UserRole } from '../types';
 import { api } from '../services/api';
 
@@ -43,7 +43,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigate
         alert(`Félicitations ! Vous êtes maintenant ${selectedPlan}.`);
         onSubscribe(selectedPlan);
         navigateTo('home');
-    } catch (error) {
+    } catch {
         alert("Erreur lors de l'abonnement.");
     }
   };
@@ -109,7 +109,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigate
         {plans.map((plan) => (
             <div key={plan.id} className="bg-white border hover:border-indigo-500 transition-all rounded-2xl p-8 shadow-sm hover:shadow-xl relative overflow-hidden group">
                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity transform group-hover:scale-110">
-                    {React.cloneElement(plan.icon as any, { size: 100 })}
+                    {React.cloneElement(plan.icon as React.ReactElement<{ size: number }>, { size: 100 })}
                 </div>
                 <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
                 <div className="text-4xl font-black mb-6">{plan.price} <span className="text-sm font-normal text-slate-500">/ mois</span></div>
