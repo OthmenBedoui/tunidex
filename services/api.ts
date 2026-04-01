@@ -1,4 +1,4 @@
-import { Listing, Order, OrderStatus, User, UserRole, SubscriptionTier, Category, SubCategory, CartItem } from '../types';
+import { Listing, Order, OrderStatus, User, UserRole, SubscriptionTier, Category, SubCategory, CartItem, SiteConfig } from '../types';
 
 const API_URL = '/api';
 
@@ -60,6 +60,11 @@ export const api = {
   // Admin Users
   getAllUsers: () => fetchWithFallback<User[]>(`${API_URL}/users`, { headers: getHeaders() }, []),
   updateUserRole: (userId: string, role: UserRole) => fetchWithFallback(`${API_URL}/users/${userId}/role`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify({role}) }),
+  updateUserBalance: (userId: string, balance: number) => fetchWithFallback(`${API_URL}/users/${userId}/balance`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify({balance}) }),
+
+  // Site Config
+  getSiteConfig: () => fetchWithFallback<SiteConfig>(`${API_URL}/config`, undefined, { logoUrl: 'https://via.placeholder.com/150', siteName: 'Tunidex' }),
+  updateSiteConfig: (config: Partial<SiteConfig>) => fetchWithFallback(`${API_URL}/config`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify(config) }),
 
   // Analytics
   getDailyStats: () => fetchWithFallback<{ dailyStats: { date: string, sales: number, orders: number }[], totalSales: number, totalOrders: number, totalUsers: number, topProducts: Listing[] }>(`${API_URL}/admin/stats`, { headers: getHeaders() }, { dailyStats: [], totalSales: 0, totalOrders: 0, totalUsers: 0, topProducts: [] }),

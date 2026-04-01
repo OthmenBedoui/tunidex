@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { ShoppingCart, Search, Menu, User as UserIcon, LogOut, LayoutDashboard, LogIn, CheckCircle, X } from 'lucide-react';
-import { User, UserRole, Category } from '../types';
+import { User, UserRole, Category, SiteConfig } from '../types';
 import * as LucideIcons from 'lucide-react';
 
 interface LayoutProps {
@@ -14,6 +14,7 @@ interface LayoutProps {
   categories: Category[];
   notification?: { show: boolean; message: string }; // New prop for popup
   onCloseNotification?: () => void; // New prop to close popup
+  siteConfig: SiteConfig;
 }
 
 // Helper to render icon by string name with robust lookup
@@ -33,7 +34,8 @@ const Layout: React.FC<LayoutProps> = ({
   currentPage, 
   categories,
   notification,
-  onCloseNotification
+  onCloseNotification,
+  siteConfig
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -73,8 +75,14 @@ const Layout: React.FC<LayoutProps> = ({
                 <Menu size={24} />
               </button>
               <div className="flex items-center cursor-pointer" onClick={() => navigateTo('home')}>
-                <div className="bg-indigo-600 text-white p-1.5 rounded mr-2 font-bold text-xl">T</div>
-                <span className="font-bold text-xl tracking-tight text-slate-900">Tunidex</span>
+                {siteConfig.logoUrl ? (
+                  <img src={siteConfig.logoUrl} alt={siteConfig.siteName} className="h-8 w-auto mr-2" />
+                ) : (
+                  <div className="bg-indigo-600 text-white p-1.5 rounded mr-2 font-bold text-xl">
+                    {siteConfig.siteName.charAt(0)}
+                  </div>
+                )}
+                <span className="font-bold text-xl tracking-tight text-slate-900">{siteConfig.siteName}</span>
               </div>
             </div>
 
@@ -122,8 +130,8 @@ const Layout: React.FC<LayoutProps> = ({
                           <p className="text-sm font-bold text-slate-900">{user.username}</p>
                           <p className="text-xs text-slate-500 truncate">{user.email}</p>
                         </div>
-                        {user.role === UserRole.ADMIN && <button onClick={() => { navigateTo('admin-dashboard'); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center"><LayoutDashboard size={16} className="mr-2" /> Admin Panel</button>}
-                        {user.role === UserRole.USER && <button onClick={() => { navigateTo('user-dashboard'); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center"><UserIcon size={16} className="mr-2" /> Mon Profil</button>}
+                        {(user.role === UserRole.ADMIN || user.role === UserRole.SUB_ADMIN || user.role === UserRole.SELLER) && <button onClick={() => { navigateTo('admin-dashboard'); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center"><LayoutDashboard size={16} className="mr-2" /> Admin Panel</button>}
+                        {user.role === UserRole.CLIENT && <button onClick={() => { navigateTo('user-dashboard'); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center"><UserIcon size={16} className="mr-2" /> Mon Profil</button>}
                         <button onClick={() => { onLogout(); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-indigo-600 hover:bg-indigo-50 flex items-center"><LogOut size={16} className="mr-2" /> Déconnexion</button>
                      </div>
                    )}

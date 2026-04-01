@@ -1,11 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
-import { Package, TrendingUp, DollarSign, Plus, Loader2, Zap, Crown, Users, Shield, FolderTree, Trash2, Edit, LayoutGrid, Save, X } from 'lucide-react';
-import { User, Order, OrderStatus, Listing, UserRole, Category, SubCategory } from '../types';
+import { Package, TrendingUp, DollarSign, Plus, Loader2, Zap, Crown, Users, Shield, FolderTree, Trash2, Edit, LayoutGrid, Save, X, Settings } from 'lucide-react';
+import { User, Order, OrderStatus, Listing, UserRole, Category, SubCategory, ProductType, LoginCredential, SiteConfig } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { generateListingDescription } from '../services/geminiService';
 import { api } from '../services/api';
 import * as LucideIcons from 'lucide-react';
+import { ImageInput } from '../components/ImageInput';
 
 interface AdminDashboardProps {
   orders: Order[];
@@ -15,6 +16,8 @@ interface AdminDashboardProps {
   onCreateListing: (listing: Partial<Listing>) => void;
   onRefreshCategories: () => void;
   user: User;
+  siteConfig: SiteConfig;
+  onUpdateSiteConfig: (config: Partial<SiteConfig>) => void;
 }
 
 // Helper for Icon Preview with robust lookup
@@ -34,8 +37,8 @@ const GRADIENT_PRESETS = [
     { name: 'Cyan', class: 'bg-gradient-to-r from-cyan-500 to-blue-600' },
 ];
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onCreateListing, onRefreshCategories, user }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'listings' | 'create' | 'users' | 'categories'>('overview');
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onCreateListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig }) => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'listings' | 'create' | 'users' | 'categories' | 'settings'>('overview');
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<{name: string, sales: number, orders: number}[]>([]);
   const [summary, setSummary] = useState({ totalSales: 0, totalOrders: 0, totalUsers: 0 });
@@ -55,6 +58,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [newSubCatIcon, setNewSubCatIcon] = useState('Package');
   const [newSubCatDesc, setNewSubCatDesc] = useState('');
   const [newSubCatOrder, setNewSubCatOrder] = useState('0');
+  
+  // --- User Management State ---
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editUserRole, setEditUserRole] = useState<UserRole>(UserRole.CLIENT);
+  const [editUserBalance, setEditUserBalance] = useState('');
   const [selectedCatForSub, setSelectedCatForSub] = useState('');
 
   // --- Listing Create State ---
@@ -71,6 +79,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [newListingMetaTitle, setNewListingMetaTitle] = useState('');
   const [newListingMetaDesc, setNewListingMetaDesc] = useState('');
   const [newListingKeywords, setNewListingKeywords] = useState('');
+  const [newListingProductType, setNewListingProductType] = useState<ProductType>(ProductType.STANDARD);
+  const [newListingCredentials, setNewListingCredentials] = useState<{username: string, password?: string}[]>([]);
+  const [newListingStaticKey, setNewListingStaticKey] = useState('');
   const [generatedDescription, setGeneratedDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -106,6 +117,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [editSubOrder, setEditSubOrder] = useState('0');
   const [editSubCatId, setEditSubCatId] = useState('');
   
+  // --- Site Config State ---
+  const [siteLogo, setSiteLogo] = useState(siteConfig.logoUrl);
+  const [siteName, setSiteName] = useState(siteConfig.siteName);
+  const [siteFavicon, setSiteFavicon] = useState(siteConfig.faviconUrl || '');
+
+  useEffect(() => {
+    setSiteLogo(siteConfig.logoUrl);
+    setSiteName(siteConfig.siteName);
+    setSiteFavicon(siteConfig.faviconUrl || '');
+  }, [siteConfig]);
+
   useEffect(() => {
     if (activeTab === 'users' && user.role === UserRole.ADMIN) {
         api.getAllUsers().then(setAllUsers);
@@ -136,6 +158,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
         fetchStats();
     }
   }, [activeTab, user.role]);
+
+  const startEditingUser = (u: User) => {
+    setEditingUser(u);
+    setEditUserRole(u.role);
+    setEditUserBalance(u.balance.toString());
+  };
+
+  const handleUpdateUser = async () => {
+    if (!editingUser) return;
+    try {
+      setIsLoading(true);
+      await api.updateUserRole(editingUser.id, editUserRole);
+      await api.updateUserBalance(editingUser.id, parseFloat(editUserBalance) || 0);
+      
+      setAllUsers(prev => prev.map(u => u.id === editingUser.id ? { ...u, role: editUserRole, balance: parseFloat(editUserBalance) || 0 } : u));
+      setEditingUser(null);
+      alert("Utilisateur mis à jour avec succès !");
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de la mise à jour de l'utilisateur");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Categories Handlers
   const handleCreateCategory = async (e: React.FormEvent) => {
@@ -252,6 +298,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       setEditCatGradient(cat.gradient || GRADIENT_PRESETS[0].class);
   };
 
+  // Product Key Management Helpers
+  const addCredentialField = () => {
+    setNewListingCredentials([...newListingCredentials, { username: '', password: '' }]);
+  };
+
+  const removeCredentialField = (index: number) => {
+    setNewListingCredentials(newListingCredentials.filter((_, i) => i !== index));
+  };
+
+  const updateCredentialField = (index: number, field: 'username' | 'password', value: string) => {
+    const updated = [...newListingCredentials];
+    updated[index] = { ...updated[index], [field]: value };
+    setNewListingCredentials(updated);
+  };
+
   // Listing Handlers
   const handleGenerateDescription = async () => {
     setIsGenerating(true);
@@ -264,6 +325,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     e.preventDefault();
     const galleryArray = newListingGallery.split(',').map(s => s.trim()).filter(s => s.length > 0);
     
+    const credentials: LoginCredential[] = newListingCredentials.map(c => ({
+        id: Math.random().toString(36).substr(2, 9),
+        username: c.username,
+        password: c.password,
+        isUsed: false,
+        createdAt: new Date().toISOString()
+    }));
+
     onCreateListing({
         game: newListingGame,
         title: newListingTitle,
@@ -274,13 +343,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
         imageUrl: newListingImageUrl,
         logoUrl: newListingLogoUrl,
         gallery: galleryArray,
-        stock: 1,
+        stock: newListingProductType === ProductType.LOGIN_CREDENTIALS ? credentials.length : (newListingProductType === ProductType.KEY ? 999 : 1),
         deliveryTimeHours: 24,
         isInstant: newListingIsInstant,
         preparationTime: newListingIsInstant ? 'Immédiat' : newListingPrepTime,
         metaTitle: newListingMetaTitle,
         metaDesc: newListingMetaDesc,
         keywords: newListingKeywords,
+        productType: newListingProductType,
+        credentials: newListingProductType === ProductType.LOGIN_CREDENTIALS ? credentials : [],
+        staticKey: newListingProductType === ProductType.KEY ? newListingStaticKey : undefined,
     });
     // Reset form
     setNewListingGame('');
@@ -297,6 +369,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     setNewListingMetaDesc('');
     setNewListingKeywords('');
     setGeneratedDescription('');
+    setNewListingProductType(ProductType.STANDARD);
+    setNewListingCredentials([]);
+    setNewListingStaticKey('');
     
     setActiveTab('listings');
   };
@@ -309,12 +384,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       <div className="w-full md:w-64 bg-white rounded-lg shadow p-4 h-fit sticky top-24">
         <h2 className="font-bold text-lg mb-4 px-2 text-slate-800 flex items-center">
             {user.role === UserRole.ADMIN ? <Crown size={20} className="mr-2 text-yellow-500" /> : <Shield size={20} className="mr-2 text-blue-500" />}
-            {user.role === UserRole.ADMIN ? 'Admin Panel' : 'Espace Agent'}
+            {user.role === UserRole.ADMIN ? 'Admin Panel' : user.role === UserRole.SUB_ADMIN ? 'Sous Admin' : 'Espace Vendeur'}
         </h2>
         <nav className="space-y-1">
           <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'overview' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><TrendingUp size={18} /> <span>Analytique</span></button>
           <button onClick={() => setActiveTab('orders')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'orders' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><Package size={18} /> <span>Commandes</span></button>
           <button onClick={() => setActiveTab('listings')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'listings' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><DollarSign size={18} /> <span>Produits</span></button>
+          {user.role === UserRole.ADMIN && (
+            <button onClick={() => setActiveTab('settings')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'settings' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><Settings size={18} /> <span>Paramètres</span></button>
+          )}
           {user.role === UserRole.ADMIN && (
             <>
                 <button onClick={() => setActiveTab('categories')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md ${activeTab === 'categories' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}><FolderTree size={18} /> <span>Catégories</span></button>
@@ -329,6 +407,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
         {isLoading && (
             <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-50 flex items-center justify-center">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+            </div>
+        )}
+         {activeTab === 'settings' && user.role === UserRole.ADMIN && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden p-6 space-y-6">
+                <h2 className="text-xl font-bold text-slate-900 border-b pb-4">Paramètres du Site</h2>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nom du Site</label>
+                            <input 
+                                type="text" 
+                                className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+                                value={siteName}
+                                onChange={(e) => setSiteName(e.target.value)}
+                                placeholder="Tunidex"
+                            />
+                        </div>
+                        <div>
+                            <ImageInput 
+                                label="URL du Logo"
+                                value={siteLogo}
+                                onChange={setSiteLogo}
+                                placeholder="https://..."
+                            />
+                        </div>
+                        <div>
+                            <ImageInput 
+                                label="URL du Favicon (Icône)"
+                                value={siteFavicon}
+                                onChange={setSiteFavicon}
+                                placeholder="https://..."
+                            />
+                        </div>
+                        <button 
+                            onClick={() => onUpdateSiteConfig({ siteName, logoUrl: siteLogo, faviconUrl: siteFavicon })}
+                            className="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700 transition flex items-center"
+                        >
+                            <Save size={18} className="mr-2" /> Enregistrer les modifications
+                        </button>
+                    </div>
+                    
+                    <div className="bg-slate-50 p-6 rounded-xl border border-slate-100 flex flex-col items-center justify-center text-center">
+                        <div className="text-xs font-bold text-slate-400 uppercase mb-4">Aperçu du Header</div>
+                        <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center space-x-3 w-full">
+                            {siteLogo ? (
+                                <img src={siteLogo} alt="Logo" className="h-8 w-auto" />
+                            ) : (
+                                <div className="bg-indigo-600 text-white p-1.5 rounded font-bold text-xl w-10 h-10 flex items-center justify-center">
+                                    {siteName.charAt(0)}
+                                </div>
+                            )}
+                            <span className="font-bold text-xl tracking-tight text-slate-900">{siteName}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-4 italic">Ceci est un aperçu de la façon dont votre logo apparaîtra dans la barre de navigation.</p>
+                    </div>
+                </div>
             </div>
         )}
         {activeTab === 'overview' && (
@@ -438,8 +573,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                             <input className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={editCatIcon} onChange={e => setEditCatIcon(e.target.value)} />
                                         </div>
                                         <div>
-                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Image de Couverture (URL)</label>
-                                            <input className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={editCatImage} onChange={e => setEditCatImage(e.target.value)} placeholder="https://..." />
+                                            <ImageInput 
+                                                label="Image de Couverture"
+                                                value={editCatImage}
+                                                onChange={setEditCatImage}
+                                                placeholder="https://..."
+                                            />
                                         </div>
                                         <div>
                                             <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Dégradé de Couleur</label>
@@ -563,8 +702,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                         <a href="https://lucide.dev/icons" target="_blank" className="text-[10px] text-indigo-500 hover:underline mt-1 block">Liste des icones</a>
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Image Cover (URL)</label>
-                                        <input className="w-full border p-2 rounded" placeholder="https://..." value={newCatImage} onChange={e => setNewCatImage(e.target.value)} />
+                                        <ImageInput 
+                                            label="Image Cover"
+                                            value={newCatImage}
+                                            onChange={setNewCatImage}
+                                            placeholder="https://..."
+                                        />
                                     </div>
                                 </div>
 
@@ -765,15 +908,89 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                 <input type="text" className="w-full border rounded p-2" value={newListingTitle} onChange={e => setNewListingTitle(e.target.value)} required />
               </div>
 
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center">
+                      <Shield size={16} className="mr-2 text-indigo-600" /> Type de Produit & Accès
+                  </label>
+                  <div className="space-y-4">
+                      <div className="grid grid-cols-3 gap-2">
+                          {Object.values(ProductType).map((type) => (
+                              <button
+                                  key={type}
+                                  type="button"
+                                  onClick={() => setNewListingProductType(type)}
+                                  className={`p-2 rounded-lg border text-[10px] font-bold uppercase transition-all ${newListingProductType === type ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}
+                              >
+                                  {type === ProductType.STANDARD ? 'Standard' : type === ProductType.LOGIN_CREDENTIALS ? 'Logins Pool' : 'Clé Unique'}
+                              </button>
+                          ))}
+                      </div>
+
+                      {newListingProductType === ProductType.LOGIN_CREDENTIALS && (
+                          <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                              <div className="flex justify-between items-center">
+                                  <label className="text-xs font-bold uppercase text-slate-500">Pool de Logins/Passwords</label>
+                                  <button type="button" onClick={addCredentialField} className="text-xs text-indigo-600 font-bold hover:underline flex items-center">
+                                      <Plus size={12} className="mr-1" /> Ajouter
+                                  </button>
+                              </div>
+                              <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
+                                  {newListingCredentials.map((cred, idx) => (
+                                      <div key={idx} className="flex gap-2 items-center">
+                                          <input 
+                                              placeholder="Login" 
+                                              className="flex-1 border rounded p-1.5 text-xs" 
+                                              value={cred.username} 
+                                              onChange={(e) => updateCredentialField(idx, 'username', e.target.value)}
+                                          />
+                                          <input 
+                                              placeholder="Password" 
+                                              className="flex-1 border rounded p-1.5 text-xs" 
+                                              value={cred.password} 
+                                              onChange={(e) => updateCredentialField(idx, 'password', e.target.value)}
+                                          />
+                                          <button type="button" onClick={() => removeCredentialField(idx)} className="text-red-500 hover:text-red-700">
+                                              <Trash2 size={14} />
+                                          </button>
+                                      </div>
+                                  ))}
+                                  {newListingCredentials.length === 0 && (
+                                      <div className="text-center py-4 text-slate-400 text-xs italic border border-dashed rounded-lg">
+                                          Aucun compte ajouté. Cliquez sur "Ajouter" pour commencer le pool.
+                                      </div>
+                                  )}
+                              </div>
+                          </div>
+                      )}
+
+                      {newListingProductType === ProductType.KEY && (
+                          <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Clé du Produit (Sera envoyée à tous les clients)</label>
+                              <input 
+                                  type="text" 
+                                  className="w-full border rounded p-2 bg-white text-sm" 
+                                  placeholder="ex: XXXXX-XXXXX-XXXXX" 
+                                  value={newListingStaticKey} 
+                                  onChange={e => setNewListingStaticKey(e.target.value)} 
+                              />
+                          </div>
+                      )}
+                  </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
-                  <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Image Principale (URL)</label>
-                      <input type="text" className="w-full border rounded p-2" value={newListingImageUrl} onChange={e => setNewListingImageUrl(e.target.value)} placeholder="https://..." required />
-                  </div>
-                  <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Logo Spécifique (URL, Optionnel)</label>
-                      <input type="text" className="w-full border rounded p-2" value={newListingLogoUrl} onChange={e => setNewListingLogoUrl(e.target.value)} placeholder="https://..." />
-                  </div>
+                  <ImageInput 
+                    label="Image Principale"
+                    value={newListingImageUrl}
+                    onChange={setNewListingImageUrl}
+                    placeholder="https://..."
+                  />
+                  <ImageInput 
+                    label="Logo Spécifique (Optionnel)"
+                    value={newListingLogoUrl}
+                    onChange={setNewListingLogoUrl}
+                    placeholder="https://..."
+                  />
               </div>
 
               <div>
@@ -881,13 +1098,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                      </td>
                                      <td className="px-6 py-4 text-sm text-slate-600">{u.email}</td>
                                      <td className="px-6 py-4">
-                                         <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${u.role === UserRole.ADMIN ? 'bg-red-100 text-red-700' : u.role === UserRole.AGENT ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                         <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${u.role === UserRole.ADMIN ? 'bg-red-100 text-red-700' : u.role === UserRole.SUB_ADMIN ? 'bg-orange-100 text-orange-700' : u.role === UserRole.SELLER ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
                                              {u.role}
                                          </span>
                                      </td>
                                      <td className="px-6 py-4 font-bold text-slate-900 text-sm">{u.balance.toFixed(2)} TND</td>
                                      <td className="px-6 py-4">
-                                         <button className="text-slate-400 hover:text-indigo-600"><Edit size={16} /></button>
+                                         <button onClick={() => startEditingUser(u)} className="text-slate-400 hover:text-indigo-600"><Edit size={16} /></button>
                                      </td>
                                  </tr>
                              ))}
@@ -895,6 +1112,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                      </table>
                  </div>
              </div>
+        )}
+        {editingUser && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                    <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                        <h3 className="font-bold text-slate-900">Modifier l'utilisateur</h3>
+                        <button onClick={() => setEditingUser(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nom d'utilisateur</label>
+                            <div className="px-4 py-2 bg-slate-50 rounded-lg border border-slate-100 text-slate-600 font-medium">{editingUser.username}</div>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rôle</label>
+                            <select 
+                                value={editUserRole}
+                                onChange={(e) => setEditUserRole(e.target.value as UserRole)}
+                                className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            >
+                                {Object.values(UserRole).filter(r => r !== UserRole.GUEST).map(role => (
+                                    <option key={role} value={role}>{role}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Solde (TND)</label>
+                            <input 
+                                type="number" 
+                                value={editUserBalance}
+                                onChange={(e) => setEditUserBalance(e.target.value)}
+                                className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                        </div>
+                        <button 
+                            onClick={handleUpdateUser}
+                            className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition flex items-center justify-center space-x-2"
+                        >
+                            <Save size={18} />
+                            <span>Enregistrer les modifications</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
         )}
         {activeTab === 'orders' && (
              <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -910,6 +1171,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                  <th className="px-6 py-3">Client</th>
                                  <th className="px-6 py-3">Produit</th>
                                  <th className="px-6 py-3">Montant</th>
+                                 <th className="px-6 py-3">Contenu</th>
                                  <th className="px-6 py-3">Statut</th>
                                  <th className="px-6 py-3">Date</th>
                              </tr>
@@ -921,6 +1183,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                      <td className="px-6 py-4 text-sm font-bold text-slate-900">{o.buyerId.slice(0, 8)}...</td>
                                      <td className="px-6 py-4 text-sm text-slate-600">{o.items?.[0]?.titleSnapshot || 'Multi-items'}</td>
                                      <td className="px-6 py-4 font-bold text-slate-900 text-sm">{o.amount.toFixed(2)} TND</td>
+                                     <td className="px-6 py-4">
+                                         {o.items?.[0]?.deliveredContent ? (
+                                             <div className="text-[10px] bg-slate-100 p-1 rounded font-mono text-slate-600 break-all max-w-[150px]">
+                                                 {o.items[0].deliveredContent}
+                                             </div>
+                                         ) : (
+                                             <span className="text-[10px] text-slate-400 italic">N/A</span>
+                                         )}
+                                     </td>
+                                     <td className="px-6 py-4">
+                                         {o.items?.[0]?.deliveredContent ? (
+                                             <div className="text-[10px] bg-slate-100 p-1 rounded font-mono text-slate-600 break-all max-w-[150px]">
+                                                 {o.items[0].deliveredContent}
+                                             </div>
+                                         ) : (
+                                             <span className="text-[10px] text-slate-400 italic">N/A</span>
+                                         )}
+                                     </td>
                                      <td className="px-6 py-4">
                                          <select 
                                             className={`text-[10px] font-bold uppercase px-2 py-1 rounded border-none focus:ring-0 cursor-pointer ${
@@ -987,7 +1267,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                      </td>
                                      <td className="px-6 py-4">
                                          <div className="flex space-x-2">
-                                             <button className="text-slate-400 hover:text-indigo-600"><Edit size={16} /></button>
+                                             <button 
+                                            onClick={() => startEditingUser(u)}
+                                            className="text-slate-400 hover:text-indigo-600"
+                                          >
+                                            <Edit size={16} />
+                                          </button>
                                              <button className="text-slate-400 hover:text-red-500"><Trash2 size={16} /></button>
                                          </div>
                                      </td>
@@ -1014,10 +1299,33 @@ export const UserDashboard: React.FC<{user: User, orders: Order[]}> = ({ user, o
        <div className="flex-1 space-y-4">
           <h2 className="font-bold text-2xl">Mes Commandes</h2>
           {orders.map((o) => (
-             <div key={o.id} className="bg-white p-4 rounded shadow flex justify-between">
-                <span>{o.items?.[0]?.titleSnapshot || 'Commande'}</span> <span className="font-bold">{o.amount} TND</span>
+             <div key={o.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="flex-1">
+                   <div className="text-xs font-bold text-indigo-600 uppercase mb-1">#{o.id.slice(0, 8)}</div>
+                   <h3 className="font-bold text-slate-900">{o.items?.[0]?.titleSnapshot || 'Commande'}</h3>
+                   <div className="text-xs text-slate-500 mt-1">{new Date(o.createdAt).toLocaleDateString()}</div>
+                </div>
+                
+                {o.items?.[0]?.deliveredContent && (
+                   <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-100 w-full md:w-auto">
+                       <div className="text-[10px] font-bold text-indigo-600 uppercase mb-1">Accès / Clé</div>
+                       <div className="text-sm font-mono font-bold text-slate-900 select-all">{o.items[0].deliveredContent}</div>
+                   </div>
+                )}
+
+                <div className="text-right">
+                   <div className="font-black text-slate-900">{o.amount.toFixed(2)} TND</div>
+                   <div className={`text-[10px] font-bold uppercase px-2 py-1 rounded mt-1 inline-block ${o.status === OrderStatus.COMPLETED ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                       {o.status}
+                   </div>
+                </div>
              </div>
           ))}
+          {orders.length === 0 && (
+              <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 italic">
+                  Vous n'avez pas encore passé de commande.
+              </div>
+          )}
        </div>
     </div>
   );

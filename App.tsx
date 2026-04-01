@@ -8,7 +8,7 @@ import Cart from './pages/Cart';
 import AiTools from './pages/AiTools';
 import CategoryPage from './pages/CategoryPage';
 import { AdminDashboard, UserDashboard } from './pages/Dashboards';
-import { User, UserRole, Listing, Order, OrderStatus, SubscriptionTier, Category } from './types';
+import { User, UserRole, Listing, Order, OrderStatus, SubscriptionTier, Category, SiteConfig } from './types';
 import { api } from './services/api';
 import * as LucideIcons from 'lucide-react';
 
@@ -26,6 +26,7 @@ const App: React.FC = () => {
   
   const [cartCount, setCartCount] = useState(0);
   const [notification, setNotification] = useState({ show: false, message: '' });
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>({ logoUrl: '', siteName: 'Tunidex' });
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -33,15 +34,31 @@ const App: React.FC = () => {
     
     api.getListings().then(setListings).catch(console.error);
     api.getCategories().then(setCategories).catch(console.error);
+    api.getSiteConfig().then(setSiteConfig).catch(console.error);
     
     api.getCart().then(items => { if(items.length > 0) setCartCount(items.reduce((acc, item) => acc + item.quantity, 0)); }).catch(() => {});
     
-    if (user.role === UserRole.ADMIN || user.role === UserRole.AGENT) {
+    if (user.role === UserRole.ADMIN || user.role === UserRole.SUB_ADMIN || user.role === UserRole.SELLER) {
         api.getAllOrders().then(setOrders).catch(console.error);
     } else if (user.id !== 'guest') {
         api.getMyOrders().then(setOrders).catch(console.error);
     }
   }, [user.id, user.role]);
+
+  useEffect(() => {
+    if (siteConfig.siteName) {
+        document.title = siteConfig.siteName;
+    }
+    if (siteConfig.faviconUrl) {
+        let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
+        if (!link) {
+            link = document.createElement('link');
+            link.rel = 'icon';
+            document.getElementsByTagName('head')[0].appendChild(link);
+        }
+        link.href = siteConfig.faviconUrl;
+    }
+  }, [siteConfig]);
 
   const refreshData = () => {
       api.getListings().then(setListings).catch(console.error);
@@ -87,6 +104,17 @@ const App: React.FC = () => {
         await api.updateOrderStatus(orderId, status);
         setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
         showNotification("Statut de la commande mis à jour");
+    } catch (err) {
+        console.error(err);
+        showNotification("Erreur lors de la mise à jour");
+    }
+  };
+
+  const handleUpdateSiteConfig = async (config: Partial<SiteConfig>) => {
+    try {
+        await api.updateSiteConfig(config);
+        setSiteConfig(prev => ({ ...prev, ...config }));
+        showNotification("Configuration du site mise à jour");
     } catch (err) {
         console.error(err);
         showNotification("Erreur lors de la mise à jour");
@@ -171,7 +199,17 @@ const App: React.FC = () => {
         );
       }
       case 'admin-dashboard':
-        return <AdminDashboard user={user} orders={orders} listings={listings} categories={categories} onUpdateStatus={handleUpdateOrderStatus} onCreateListing={handleCreateListing} onRefreshCategories={refreshData} />;
+        return <AdminDashboard 
+                  user={user} 
+                  orders={orders} 
+                  listings={listings} 
+                  categories={categories} 
+                  onUpdateStatus={handleUpdateOrderStatus} 
+                  onCreateListing={handleCreateListing} 
+                  onRefreshCategories={refreshData} 
+                  siteConfig={siteConfig}
+                  onUpdateSiteConfig={handleUpdateSiteConfig}
+               />;
       
       case 'user-dashboard': return <UserDashboard user={user} orders={orders} />;
       default: return <Home listings={listings} categories={categories} onViewProduct={handleViewProduct} navigateTo={navigateTo} />;
@@ -188,6 +226,7 @@ const App: React.FC = () => {
       categories={categories}
       notification={notification}
       onCloseNotification={() => setNotification({ ...notification, show: false })}
+      siteConfig={siteConfig}
     >
       {renderContent()}
     </Layout>

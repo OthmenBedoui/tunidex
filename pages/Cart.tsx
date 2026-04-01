@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { Trash2, ShoppingBag, ArrowRight, Lock, CreditCard, Smartphone, Wallet } from 'lucide-react';
 import { api } from '../services/api';
-import { CartItem } from '../types';
+import { CartItem, ProductType } from '../types';
 
 interface CartProps {
   navigateTo: (page: string) => void;
@@ -13,11 +13,11 @@ interface CartProps {
 const MOCK_CART_ITEMS: CartItem[] = [
     {
         id: 'c1', listingId: '1', quantity: 1, 
-        listing: { id: '1', title: 'Netflix Premium 1 Mois', price: 12.00, game: 'Netflix', categoryId: 'cat_streaming', imageUrl: 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85', description: '4K', stock: 50, deliveryTimeHours: 0, gallery: [], isInstant: true, preparationTime: 'Immédiat' }
+        listing: { id: '1', title: 'Netflix Premium 1 Mois', price: 12.00, game: 'Netflix', categoryId: 'cat_streaming', imageUrl: 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85', description: '4K', stock: 50, deliveryTimeHours: 0, gallery: [], isInstant: true, preparationTime: 'Immédiat', productType: ProductType.STANDARD }
     },
     {
         id: 'c2', listingId: '2', quantity: 2, 
-        listing: { id: '2', title: 'FIFA 25 - 100K Coins', price: 25.00, game: 'EA FC 25', categoryId: 'cat_coins', imageUrl: 'https://images.unsplash.com/photo-1493711662062-fa541adb3fc8', description: 'Coins', stock: 100, deliveryTimeHours: 1, gallery: [], isInstant: false, preparationTime: '1-2 heures' }
+        listing: { id: '2', title: 'FIFA 25 - 100K Coins', price: 25.00, game: 'EA FC 25', categoryId: 'cat_coins', imageUrl: 'https://images.unsplash.com/photo-1493711662062-fa541adb3fc8', description: 'Coins', stock: 100, deliveryTimeHours: 1, gallery: [], isInstant: false, preparationTime: '1-2 heures', productType: ProductType.STANDARD }
     }
 ];
 
@@ -46,12 +46,23 @@ const Cart: React.FC<CartProps> = ({ navigateTo, onCartUpdate }) => {
 
   const handleCheckout = async () => {
     setIsCheckingOut(true);
-    setTimeout(() => {
+    try {
+        // In a real app, the backend handles this. 
+        // For the demo, we'll simulate the checkout and assignment.
+        const order = await api.checkout();
+        alert(`Paiement réussi ! Votre commande #${order.id.slice(0, 8)} est prête.`);
+        setItems([]);
+        onCartUpdate(0);
+        navigateTo('user-dashboard');
+    } catch {
+        // Fallback for demo if API fails
         alert(`Paiement simulé avec succès via ${paymentMethod} !`);
         setItems([]);
-        onCartUpdate(0); // Reset cart count to 0
+        onCartUpdate(0);
+        navigateTo('user-dashboard');
+    } finally {
         setIsCheckingOut(false);
-    }, 1500);
+    }
   };
 
   const total = items.reduce((sum, item) => sum + (item.listing.price * item.quantity), 0);

@@ -1,7 +1,8 @@
 export enum UserRole {
   GUEST = 'GUEST',
-  USER = 'USER',
-  AGENT = 'AGENT',
+  CLIENT = 'CLIENT',
+  SELLER = 'SELLER',
+  SUB_ADMIN = 'SUB_ADMIN',
   ADMIN = 'ADMIN'
 }
 
@@ -17,6 +18,21 @@ export enum OrderStatus {
   DELIVERED = 'DELIVERED',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED'
+}
+
+export enum ProductType {
+  STANDARD = 'STANDARD',
+  LOGIN_CREDENTIALS = 'LOGIN_CREDENTIALS',
+  KEY = 'KEY'
+}
+
+export interface LoginCredential {
+  id: string;
+  username: string;
+  password?: string;
+  isUsed: boolean;
+  assignedToOrderId?: string;
+  createdAt: string;
 }
 
 export interface Category {
@@ -83,6 +99,18 @@ export interface Listing {
   metaDesc?: string;
   keywords?: string;
   salesCount?: number;
+
+  // Product Key Management
+  productType: ProductType;
+  credentials?: LoginCredential[]; // Pool of logins/passwords
+  staticKey?: string; // A single key for all buyers
+}
+
+export interface SiteConfig {
+  logoUrl: string;
+  siteName: string;
+  faviconUrl?: string;
+  primaryColor?: string;
 }
 
 export interface CartItem {
@@ -98,6 +126,7 @@ export interface OrderItem {
   quantity: number;
   priceSnapshot: number;
   titleSnapshot: string;
+  deliveredContent?: string; // The login/pass or key delivered to the customer
 }
 
 export interface Order {
