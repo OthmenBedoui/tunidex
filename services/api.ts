@@ -1,11 +1,20 @@
-import { Listing, Order, OrderStatus, User, UserRole, SubscriptionTier, Category, SubCategory, CartItem, SiteConfig } from '../types';
+import { Listing, Order, OrderStatus, User, UserRole, SubscriptionTier, Category, SubCategory, CartItem, SiteConfig, GuestCheckoutPayload } from '../types';
 
 const API_URL = '/api';
 
 async function fetchWithFallback<T>(input: RequestInfo, init?: RequestInit, fallbackData?: T): Promise<T> {
   try {
     const res = await fetch(input, init);
-    if (!res.ok) throw new Error(res.statusText);
+    if (!res.ok) {
+      let message = res.statusText;
+      try {
+        const errorBody = await res.json();
+        message = errorBody.error || errorBody.message || message;
+      } catch {
+        // Keep the HTTP status text when the response is not JSON.
+      }
+      throw new Error(message);
+    }
     return await res.json();
   } catch (error) {
     console.warn(`API Fail: ${input}`, error);
@@ -25,7 +34,9 @@ const getHeaders = () => {
 export const api = {
   // Auth
   login: (email: string, password: string) => fetchWithFallback(`${API_URL}/auth/login`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email, password}) }),
-  register: (email: string, password: string, username: string) => fetchWithFallback(`${API_URL}/auth/register`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email, password, username}) }),
+  register: (email: string, password: string, username: string) => fetchWithFallback<{ verificationRequired: boolean; email: string; message: string }>(`${API_URL}/auth/register`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email, password, username}) }),
+  verifyRegistrationOtp: (email: string, otp: string) => fetchWithFallback<{ token: string; user: User }>(`${API_URL}/auth/register/verify-otp`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ email, otp }) }),
+  resendRegistrationOtp: (email: string) => fetchWithFallback<{ success: boolean; message: string }>(`${API_URL}/auth/register/resend-otp`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ email }) }),
   getCurrentUser: () => fetchWithFallback<User>(`${API_URL}/auth/me`, { headers: getHeaders() }),
   
   // Profile & Subscription
@@ -39,7 +50,8 @@ export const api = {
   getCart: () => fetchWithFallback<CartItem[]>(`${API_URL}/cart`, { headers: getHeaders() }, []),
   addToCart: (listingId: string) => fetchWithFallback(`${API_URL}/cart`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({listingId}) }),
   removeFromCart: (itemId: string) => fetchWithFallback(`${API_URL}/cart/${itemId}`, { method: 'DELETE', headers: getHeaders() }),
-  checkout: () => fetchWithFallback<Order>(`${API_URL}/checkout`, { method: 'POST', headers: getHeaders() }),
+  checkout: (data?: { paymentMethod?: string; phone?: string }) => fetchWithFallback<Order>(`${API_URL}/checkout`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data || {}) }),
+  guestCheckout: (data: GuestCheckoutPayload) => fetchWithFallback<Order>(`${API_URL}/checkout/guest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
 
   // Categories
   getCategories: () => fetchWithFallback<Category[]>(`${API_URL}/categories`, undefined, []),
@@ -54,6 +66,8 @@ export const api = {
   // Listings
   getListings: () => fetchWithFallback<Listing[]>(`${API_URL}/listings`, undefined, []),
   createListing: (listing: Partial<Listing>) => fetchWithFallback(`${API_URL}/listings`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(listing) }),
+  updateListing: (id: string, listing: Partial<Listing>) => fetchWithFallback(`${API_URL}/listings/${id}`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify(listing) }),
+  deleteListing: (id: string) => fetchWithFallback<{ success: boolean; archived?: boolean; message?: string }>(`${API_URL}/listings/${id}`, { method: 'DELETE', headers: getHeaders() }),
 
   // Orders
   getMyOrders: () => fetchWithFallback<Order[]>(`${API_URL}/orders/my`, { headers: getHeaders() }, []),
@@ -67,7 +81,7 @@ export const api = {
 
   // Site Config
   getSiteConfig: () => fetchWithFallback<SiteConfig>(`${API_URL}/config`, undefined, { logoUrl: 'https://via.placeholder.com/150', siteName: 'Tunidex' }),
-  updateSiteConfig: (config: Partial<SiteConfig>) => fetchWithFallback(`${API_URL}/config`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify(config) }),
+  updateSiteConfig: (config: Partial<SiteConfig>) => fetchWithFallback<SiteConfig>(`${API_URL}/config`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify(config) }),
 
   // Analytics
   getDailyStats: () => fetchWithFallback<{ dailyStats: { date: string, sales: number, orders: number }[], totalSales: number, totalOrders: number, totalUsers: number, topProducts: Listing[] }>(`${API_URL}/admin/stats`, { headers: getHeaders() }, { dailyStats: [], totalSales: 0, totalOrders: 0, totalUsers: 0, topProducts: [] }),

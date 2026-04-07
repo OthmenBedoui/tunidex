@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { ShoppingCart, Search, Menu, User as UserIcon, LogOut, LayoutDashboard, LogIn, CheckCircle, X } from 'lucide-react';
+import { ShoppingCart, Search, Menu, User as UserIcon, LogOut, LayoutDashboard, LogIn, CheckCircle, AlertCircle, X } from 'lucide-react';
 import { User, UserRole, Category, SiteConfig } from '../types';
 import * as LucideIcons from 'lucide-react';
 
@@ -12,7 +12,7 @@ interface LayoutProps {
   navigateTo: (page: string, slug?: string) => void;
   currentPage: string;
   categories: Category[];
-  notification?: { show: boolean; message: string }; // New prop for popup
+  notification?: { show: boolean; message: string; type: 'success' | 'error' }; // New prop for popup
   onCloseNotification?: () => void; // New prop to close popup
   siteConfig: SiteConfig;
 }
@@ -45,12 +45,20 @@ const Layout: React.FC<LayoutProps> = ({
       {/* Toast Notification Popup */}
       {notification && notification.show && (
         <div className="fixed top-24 right-4 z-[100] animate-in slide-in-from-right duration-300 fade-in">
-          <div className="bg-slate-900 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center space-x-4 border-l-4 border-green-500">
-            <div className="bg-green-500/20 p-2 rounded-full">
-              <CheckCircle size={20} className="text-green-400" />
+          <div className={`bg-slate-900 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center space-x-4 border-l-4 ${
+            notification.type === 'error' ? 'border-red-500' : 'border-green-500'
+          }`}>
+            <div className={`p-2 rounded-full ${
+              notification.type === 'error' ? 'bg-red-500/20' : 'bg-green-500/20'
+            }`}>
+              {notification.type === 'error' ? (
+                <AlertCircle size={20} className="text-red-400" />
+              ) : (
+                <CheckCircle size={20} className="text-green-400" />
+              )}
             </div>
             <div>
-              <h4 className="font-bold text-sm">Succès !</h4>
+              <h4 className="font-bold text-sm">{notification.type === 'error' ? 'Erreur' : 'Succès !'}</h4>
               <p className="text-xs text-slate-300">{notification.message}</p>
             </div>
             <button onClick={onCloseNotification} className="text-slate-400 hover:text-white pl-4">
@@ -78,7 +86,7 @@ const Layout: React.FC<LayoutProps> = ({
                 {siteConfig.logoUrl ? (
                   <img src={siteConfig.logoUrl} alt={siteConfig.siteName} className="h-8 w-auto mr-2" />
                 ) : (
-                  <div className="bg-indigo-600 text-white p-1.5 rounded mr-2 font-bold text-xl">
+                  <div className="theme-bg-accent text-white p-1.5 rounded mr-2 font-bold text-xl">
                     {siteConfig.siteName.charAt(0)}
                   </div>
                 )}
@@ -102,10 +110,10 @@ const Layout: React.FC<LayoutProps> = ({
             <div className="flex items-center space-x-3">
               {/* Cart Button with Bubble */}
               {user.role !== UserRole.GUEST && (
-                <button className="p-2 text-slate-500 hover:text-indigo-600 relative transition-transform active:scale-95" onClick={() => navigateTo('cart')}>
+                <button className="p-2 text-slate-500 relative transition-transform active:scale-95 theme-text-accent" onClick={() => navigateTo('cart')}>
                   <ShoppingCart size={24} />
                   {cartCount > 0 && (
-                    <span className="absolute -top-1 -right-1 h-5 w-5 bg-indigo-600 text-white text-xs flex items-center justify-center rounded-full font-bold animate-in zoom-in duration-200 border-2 border-white">
+                    <span className="absolute -top-1 -right-1 h-5 w-5 theme-bg-accent text-white text-xs flex items-center justify-center rounded-full font-bold animate-in zoom-in duration-200 border-2 border-white">
                       {cartCount}
                     </span>
                   )}
@@ -114,8 +122,8 @@ const Layout: React.FC<LayoutProps> = ({
 
               {user.role === UserRole.GUEST ? (
                 <div className="flex items-center space-x-2 ml-2">
-                  <button onClick={() => navigateTo('login')} className="text-slate-700 font-medium hover:text-indigo-600 px-3 py-2 text-sm flex items-center"><LogIn size={16} className="mr-1" /> Connexion</button>
-                  <button onClick={() => navigateTo('login')} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 transition shadow-sm">S'inscrire</button>
+                  <button onClick={() => navigateTo('login')} className="theme-text-accent font-medium px-3 py-2 text-sm flex items-center"><LogIn size={16} className="mr-1" /> Connexion</button>
+                  <button onClick={() => navigateTo('register')} className="theme-btn px-4 py-2 rounded-lg text-sm font-bold shadow-sm">S'inscrire</button>
                 </div>
               ) : (
                 <div className="relative ml-2">
@@ -133,7 +141,7 @@ const Layout: React.FC<LayoutProps> = ({
                            <button onClick={() => { navigateTo('profile'); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center"><UserIcon size={16} className="mr-2" /> Mon Profil</button>
                            {(user.role === UserRole.ADMIN || user.role === UserRole.SUB_ADMIN || user.role === UserRole.SELLER) && <button onClick={() => { navigateTo('admin-dashboard'); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center"><LayoutDashboard size={16} className="mr-2" /> Admin Panel</button>}
                            {user.role === UserRole.CLIENT && <button onClick={() => { navigateTo('user-dashboard'); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center"><LucideIcons.History size={16} className="mr-2" /> Mes Commandes</button>}
-                           <button onClick={() => { onLogout(); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-indigo-600 hover:bg-indigo-50 flex items-center"><LogOut size={16} className="mr-2" /> Déconnexion</button>
+                           <button onClick={() => { onLogout(); setIsProfileOpen(false); }} className="w-full text-left px-4 py-2 text-sm flex items-center" style={{ color: 'var(--theme-accent)', backgroundColor: 'transparent' }} onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--theme-accent-soft)')} onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}><LogOut size={16} className="mr-2" /> Déconnexion</button>
                         </div>
                    )}
                 </div>

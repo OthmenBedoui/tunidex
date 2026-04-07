@@ -3,6 +3,52 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+    --theme-accent: #4f46e5;
+    --theme-accent-hover: #4338ca;
+    --theme-accent-soft: #e0e7ff;
+    --theme-accent-text: #312e81;
+}
+
+.theme-text-accent {
+    color: var(--theme-accent);
+}
+
+.theme-bg-accent {
+    background-color: var(--theme-accent);
+}
+
+.theme-soft-surface {
+    background-color: var(--theme-accent-soft);
+    color: var(--theme-accent-text);
+}
+
+.theme-btn {
+    background-color: var(--theme-accent);
+    color: white;
+    transition: background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.theme-btn:hover {
+    background-color: var(--theme-accent-hover);
+}
+
+.theme-btn-secondary {
+    background-color: var(--theme-accent-soft);
+    color: var(--theme-accent-text);
+    transition: filter 160ms ease;
+}
+
+.theme-btn-secondary:hover {
+    filter: brightness(0.98);
+}
+
+.theme-focus:focus {
+    outline: none;
+    border-color: var(--theme-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accent) 22%, transparent);
+}
+
 /* Hide scrollbar for Chrome, Safari and Opera */
 .no-scrollbar::-webkit-scrollbar {
     display: none;

@@ -13,9 +13,9 @@ export enum SubscriptionTier {
 }
 
 export enum OrderStatus {
+  REGISTERED = 'REGISTERED',
   PENDING_PAYMENT = 'PENDING_PAYMENT',
-  PAID_PROCESSING = 'PAID_PROCESSING',
-  DELIVERED = 'DELIVERED',
+  PAYMENT_RECEIVED = 'PAYMENT_RECEIVED',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED'
 }
@@ -24,6 +24,12 @@ export enum ProductType {
   STANDARD = 'STANDARD',
   LOGIN_CREDENTIALS = 'LOGIN_CREDENTIALS',
   KEY = 'KEY'
+}
+
+export enum DiscountType {
+  NONE = 'NONE',
+  PERCENT = 'PERCENT',
+  AMOUNT = 'AMOUNT'
 }
 
 export interface LoginCredential {
@@ -78,6 +84,10 @@ export interface Listing {
   title: string;
   description: string;
   price: number;
+  isArchived?: boolean;
+  discountPercent?: number;
+  discountType?: DiscountType;
+  discountValue?: number;
   
   // Relations
   categoryId: string;
@@ -112,6 +122,12 @@ export interface SiteConfig {
   siteName: string;
   faviconUrl?: string;
   primaryColor?: string;
+  heroSlides?: HeroSlide[];
+  heroSlideHeight?: number;
+  accentColor?: string;
+  accentHoverColor?: string;
+  accentSoftColor?: string;
+  accentTextColor?: string;
   // SMTP Configuration
   smtpMailerName?: string;
   smtpHost?: string;
@@ -125,6 +141,17 @@ export interface SiteConfig {
   click2payEnabled?: boolean;
   click2payMerchantId?: string;
   click2payApiKey?: string;
+}
+
+export interface HeroSlide {
+  id: string;
+  imageUrl: string;
+  badge?: string;
+  title?: string;
+  subtitle?: string;
+  ctaLabel?: string;
+  linkType?: 'listing' | 'category' | 'url' | 'collections';
+  linkTarget?: string;
 }
 
 export interface CartItem {
@@ -143,12 +170,55 @@ export interface OrderItem {
   deliveredContent?: string; // The login/pass or key delivered to the customer
 }
 
+export interface InvoiceItem {
+  id: string;
+  listingId?: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  titleSnapshot: string;
+}
+
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  type: string;
+  status: string;
+  issueDate: string;
+  totalAmount: number;
+  items?: InvoiceItem[];
+}
+
+export interface GuestCheckoutPayload {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  paymentMethod?: string;
+  items: Array<{
+    listingId: string;
+    quantity: number;
+  }>;
+}
+
 export interface Order {
   id: string;
+  orderNumber: string;
   buyerId: string; // Mapped from userId in backend
+  buyer?: Pick<User, 'id' | 'username' | 'email' | 'avatarUrl'>;
+  buyerDisplayName?: string;
   items: OrderItem[];
   status: OrderStatus;
   amount: number;
+  currency?: string;
+  customerFirstName?: string;
+  customerLastName?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  paymentMethod?: string;
+  emailStatus?: string;
+  emailError?: string | null;
+  invoice?: Invoice | null;
   createdAt: string;
   updatedAt: string;
 }

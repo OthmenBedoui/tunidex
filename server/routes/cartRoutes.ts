@@ -1,11 +1,13 @@
 
 import express from 'express';
-import { getCart, addToCart, removeFromCart, checkout, getMyOrders } from '../controllers/cartController.js';
+import { getCart, addToCart, removeFromCart, checkout, guestCheckout, getMyOrders } from '../controllers/cartController.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
-router.use(authenticate); // Apply auth to all cart routes
+router.post('/checkout/guest', guestCheckout);
+
+router.use(authenticate); // Apply auth to protected cart routes only
 
 router.get('/cart', getCart);
 router.post('/cart', addToCart);

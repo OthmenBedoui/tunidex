@@ -1,5 +1,5 @@
 import express from 'express';
-import { getListings, createListing, getCategories, createCategory, updateCategory, deleteCategory, createSubCategory, deleteSubCategory, updateSubCategory } from '../controllers/productController.js';
+import { getListings, createListing, updateListing, deleteListing, getCategories, createCategory, updateCategory, deleteCategory, createSubCategory, deleteSubCategory, updateSubCategory } from '../controllers/productController.js';
 import { authenticate, isStaff, isAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -7,6 +7,8 @@ const router = express.Router();
 // Listings
 router.get('/listings', getListings);
 router.post('/listings', authenticate, isStaff, createListing);
+router.patch('/listings/:id', authenticate, isStaff, updateListing);
+router.delete('/listings/:id', authenticate, isStaff, deleteListing);
 
 // Categories
 router.get('/categories', getCategories);

@@ -21,6 +21,11 @@ export const isAdmin = (req: Request & { user?: { role: string } }, res: Respons
 };
 
 export const isStaff = (req: Request & { user?: { role: string } }, res: Response, next: NextFunction) => { 
-    if (req.user?.role !== 'ADMIN' && req.user?.role !== 'AGENT') return res.status(403).json({ error: 'Staff only' }); 
+    if (
+        req.user?.role !== 'ADMIN' &&
+        req.user?.role !== 'AGENT' &&
+        req.user?.role !== 'SUB_ADMIN' &&
+        req.user?.role !== 'SELLER'
+    ) return res.status(403).json({ error: 'Staff only' }); 
     next(); 
 };

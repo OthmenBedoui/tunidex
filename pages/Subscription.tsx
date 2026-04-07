@@ -7,9 +7,10 @@ interface SubscriptionProps {
   user: UserType;
   onSubscribe: (tier: SubscriptionTier) => void;
   navigateTo: (page: string) => void;
+  onRequireLogin: () => void;
 }
 
-const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigateTo }) => {
+const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigateTo, onRequireLogin }) => {
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionTier | null>(null);
   const [step, setStep] = useState(1); // 1: Select Plan, 2: Details
   
@@ -27,7 +28,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigate
   ];
 
   const handlePlanSelect = (tier: SubscriptionTier) => {
-    if (user.role === UserRole.GUEST) return navigateTo('login');
+    if (user.role === UserRole.GUEST) return onRequireLogin();
     setSelectedPlan(tier);
     setStep(2);
   };

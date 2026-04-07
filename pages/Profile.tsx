@@ -159,6 +159,7 @@ const Profile: React.FC<ProfileProps> = ({ user, onUpdateUser, navigateTo }) => 
                   value={avatarUrl}
                   onChange={setAvatarUrl}
                   placeholder="https://..."
+                  uploadPreset="avatar"
                 />
               </div>
 
