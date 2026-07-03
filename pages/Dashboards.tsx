@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { Package, TrendingUp, DollarSign, Plus, Loader2, Zap, Users, Shield, Trash2, Edit, LayoutGrid, Save, X, User as UserIcon, Clock, History } from 'lucide-react';
 import { User, Order, OrderStatus, Listing, UserRole, Category, SubCategory, ProductType, LoginCredential, SiteConfig, HeroSlide, HeroPromoBanner, FloatingBrandCard, DiscountType, ProductVariant, StoreSectionConfig, CustomFont, ClientNotification } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -7,6 +7,10 @@ import { generateListingDescription } from '../services/geminiService';
 import { api, SeoAnalytics } from '../services/api';
 import * as LucideIcons from 'lucide-react';
 import { AdminErrorState, AdminPremiumLoader } from '../components/admin/AdminSurfaceState';
+import AdminCategoriesSection from './admin/sections/AdminCategoriesSection';
+import AdminListingsSection from './admin/sections/AdminListingsSection';
+import AdminOrdersSection from './admin/sections/AdminOrdersSection';
+import AdminUsersSection from './admin/sections/AdminUsersSection';
 import { ImageInput } from '../components/shared/ImageInput';
 import { RichTextEditor } from '../components/shared/RichTextEditor';
 import { ListingImage } from '../components/store-client/ListingImage';
@@ -14,6 +18,7 @@ import { AdminEmptyState, AdminPanelCard, AdminStickyActionBar } from '../compon
 import { getListingDiscountLabel, getListingFinalPrice, getPackageOriginalTotal, getPackageSavings, hasListingDiscount } from '../utils/pricing';
 import { richTextToPlainText, sanitizeRichText } from '../utils/richText';
 import { getMergedStoreSections, STORE_SECTION_DEFINITIONS } from '../utils/storeSections';
+import { AdminTab } from './admin/adminRouteConfig';
 
 interface AdminDashboardProps {
   orders: Order[];
@@ -30,19 +35,26 @@ interface AdminDashboardProps {
   onUpdateSiteConfig: (config: Partial<SiteConfig>) => void;
   onResendOrderInvoiceEmail: (orderId: string) => Promise<void>;
   navigateTo: (page: string, slug?: string) => void;
-  focusTab?: AdminTab | null;
-  onFocusTabHandled?: () => void;
+  routeTab: AdminTab;
   focusOrderId?: string | null;
   onFocusOrderHandled?: () => void;
   onActiveTabChange?: (tab: AdminTab) => void;
 }
 
-type AdminTab = 'overview' | 'orders' | 'listings' | 'create' | 'users' | 'categories' | 'settings' | 'customization' | 'store-config' | 'email-config' | 'notification-config' | 'seo' | 'data';
-
 const isImageIconValue = (value?: string) => {
   const normalized = value?.trim() || '';
   return /^(https?:\/\/|data:image\/|blob:|\/)/i.test(normalized);
 };
+
+const slugifyProductPreview = (value: string) =>
+  value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
 
 // Helper for Icon Preview with robust lookup
 const DynamicIcon = ({ name, className }: { name: string, className?: string }) => {
@@ -509,16 +521,19 @@ const getListingStateClasses = (listing: Listing) => {
   return 'bg-red-100 text-red-700';
 };
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onAdminOrderAction, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, navigateTo, focusTab, onFocusTabHandled, focusOrderId, onFocusOrderHandled, onActiveTabChange }) => {
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onAdminOrderAction, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, navigateTo, routeTab, focusOrderId, onFocusOrderHandled, onActiveTabChange }) => {
+  const [activeTab, setActiveTab] = useState<AdminTab>(routeTab);
+  const requestAdminTab = (tab: AdminTab) => {
+    setActiveTab(tab);
+    onActiveTabChange?.(tab);
+  };
   const [notificationAdminTab, setNotificationAdminTab] = useState<'orders' | 'client'>('orders');
-  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [notificationUsers, setNotificationUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<{name: string, sales: number, orders: number}[]>([]);
   const [summary, setSummary] = useState({ totalSales: 0, totalOrders: 0, totalUsers: 0 });
   const [topProducts, setTopProducts] = useState<Listing[]>([]);
   const [isOverviewLoading, setIsOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
-  const [isSavingUser, setIsSavingUser] = useState(false);
   const [overviewReloadNonce, setOverviewReloadNonce] = useState(0);
   const [listingPendingDelete, setListingPendingDelete] = useState<Listing | null>(null);
   const [isDeletingListing, setIsDeletingListing] = useState(false);
@@ -558,11 +573,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [newSubCatOrder, setNewSubCatOrder] = useState('0');
   
   // --- User Management State ---
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [editUserRole, setEditUserRole] = useState<UserRole>(UserRole.CLIENT);
-  const [editUserBalance, setEditUserBalance] = useState('');
   const [selectedCatForSub, setSelectedCatForSub] = useState('');
-  const [userSubTab, setUserSubTab] = useState<'all' | 'roles'>('all');
 
   // --- Listing Create State ---
   const [newListingGame, setNewListingGame] = useState('');
@@ -651,6 +662,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [siteName, setSiteName] = useState(siteConfig.siteName);
   const [logoSize, setLogoSize] = useState(siteConfig.logoSize || 32);
   const [siteFavicon, setSiteFavicon] = useState(siteConfig.faviconUrl || '');
+  const [startupLoaderEnabled, setStartupLoaderEnabled] = useState(siteConfig.startupLoaderEnabled ?? false);
+  const [startupLoaderImageUrl, setStartupLoaderImageUrl] = useState(siteConfig.startupLoaderImageUrl || '');
+  const [startupLoaderBackground, setStartupLoaderBackground] = useState(siteConfig.startupLoaderBackground || '#020617');
   const [heroSlides, setHeroSlides] = useState<HeroSlide[]>(siteConfig.heroSlides || []);
   const [heroPromoBanners, setHeroPromoBanners] = useState<HeroPromoBanner[]>(siteConfig.heroPromoBanners || []);
   const [floatingBrandCards, setFloatingBrandCards] = useState<FloatingBrandCard[]>(siteConfig.floatingBrandCards || []);
@@ -658,7 +672,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [coverBackgroundUrl, setCoverBackgroundUrl] = useState(siteConfig.coverBackgroundUrl || '');
   const [coverListingIds, setCoverListingIds] = useState<string[]>(siteConfig.coverListingIds || []);
   const [storeSections, setStoreSections] = useState<StoreSectionConfig[]>(getMergedStoreSections(siteConfig));
-  const [customizationSection, setCustomizationSection] = useState<'hero' | 'floating-cards' | 'store-cover' | 'colors' | 'font' | 'layout'>('hero');
+  const [customizationSection, setCustomizationSection] = useState<'hero' | 'floating-cards' | 'store-cover' | 'loader' | 'colors' | 'font' | 'layout'>('hero');
   const [accentColor, setAccentColor] = useState(siteConfig.accentColor || '#4f46e5');
   const [accentHoverColor, setAccentHoverColor] = useState(siteConfig.accentHoverColor || '#4338ca');
   const [accentSoftColor, setAccentSoftColor] = useState(siteConfig.accentSoftColor || '#e0e7ff');
@@ -764,6 +778,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     setSiteName(siteConfig.siteName);
     setLogoSize(siteConfig.logoSize || 32);
     setSiteFavicon(siteConfig.faviconUrl || '');
+    setStartupLoaderEnabled(siteConfig.startupLoaderEnabled ?? false);
+    setStartupLoaderImageUrl(siteConfig.startupLoaderImageUrl || '');
+    setStartupLoaderBackground(siteConfig.startupLoaderBackground || '#020617');
     setHeroSlides(siteConfig.heroSlides || []);
     setHeroPromoBanners(siteConfig.heroPromoBanners || []);
     setFloatingBrandCards(siteConfig.floatingBrandCards || []);
@@ -1163,19 +1180,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     });
   };
 
-  useEffect(() => {
-    if (!focusTab) return;
-    if (focusTab !== activeTab) {
-      setActiveTab(focusTab);
+  useLayoutEffect(() => {
+    if (routeTab !== activeTab) {
+      setActiveTab(routeTab);
     }
-    onFocusTabHandled?.();
-  }, [activeTab, focusTab, onFocusTabHandled]);
+  }, [activeTab, routeTab]);
 
-  useEffect(() => {
-    onActiveTabChange?.(activeTab);
-  }, [activeTab, onActiveTabChange]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!focusOrderId) return;
     setActiveTab('orders');
     setExpandedOrderId(focusOrderId);
@@ -1185,27 +1196,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   useEffect(() => {
     let isCancelled = false;
 
-    if (activeTab === 'users' && user.role === UserRole.ADMIN) {
-        api.getAllUsers()
-          .then((users) => {
-            if (!isCancelled) {
-              setAllUsers(users);
-            }
-          })
-          .catch((error) => {
-            console.warn('Unable to load admin users.', error);
-            showAdminToast({
-              type: 'error',
-              title: 'Utilisateurs indisponibles',
-              message: "Impossible de charger la liste des utilisateurs pour le moment."
-            });
-          });
-    }
     if (activeTab === 'notification-config' && user.role === UserRole.ADMIN) {
         api.getAllUsers()
           .then((users) => {
             if (!isCancelled) {
-              setAllUsers(users);
+              setNotificationUsers(users);
             }
           })
           .catch((error) => {
@@ -1269,38 +1264,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       isCancelled = true;
     };
   }, [activeTab, overviewReloadNonce, user.role]);
-
-  const startEditingUser = (u: User) => {
-    setEditingUser(u);
-    setEditUserRole(u.role);
-    setEditUserBalance(u.balance.toString());
-  };
-
-  const handleUpdateUser = async () => {
-    if (!editingUser) return;
-    try {
-      setIsSavingUser(true);
-      await api.updateUserRole(editingUser.id, editUserRole);
-      await api.updateUserBalance(editingUser.id, parseFloat(editUserBalance) || 0);
-      
-      setAllUsers(prev => prev.map(u => u.id === editingUser.id ? { ...u, role: editUserRole, balance: parseFloat(editUserBalance) || 0 } : u));
-      setEditingUser(null);
-      showAdminToast({
-        type: 'success',
-        title: 'Utilisateur mis à jour',
-        message: 'Le rôle et le solde ont été enregistrés avec succès.'
-      });
-    } catch (err) {
-      console.error(err);
-      showAdminToast({
-        type: 'error',
-        title: 'Mise à jour impossible',
-        message: "Erreur lors de la mise à jour de l'utilisateur."
-      });
-    } finally {
-      setIsSavingUser(false);
-    }
-  };
 
   // Categories Handlers
   const handleCreateCategory = async (e: React.FormEvent) => {
@@ -1848,7 +1811,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
           }))
         : []
     );
-    setActiveTab('create');
+    requestAdminTab('create');
   };
 
   // Listing Handlers
@@ -1962,7 +1925,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     }
 
     resetListingForm();
-    setActiveTab('listings');
+    requestAdminTab('listings');
   };
 
   const handleDeleteListingClick = (listing: Listing) => {
@@ -2019,6 +1982,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     isInstant: newListingIsInstant,
     isPackage: newListingIsPackage
   };
+  const draftProductSlug = slugifyProductPreview(newListingTitle) || (editingListing?.slug || 'product');
 
   const openDraftPreview = () => {
     document.getElementById('listing-live-preview')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2700,7 +2664,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                           disabled={clientNotificationTargetMode !== 'selected'}
                         >
                           <option value="">Selectionner un client</option>
-                          {allUsers.filter((account) => account.role === UserRole.CLIENT).map((account) => (
+                          {notificationUsers.filter((account) => account.role === UserRole.CLIENT).map((account) => (
                             <option key={account.id} value={account.id}>
                               {account.fullName || account.username} - {account.email}
                             </option>
@@ -2740,7 +2704,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                     <div className="mt-4 space-y-3">
                       <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
                         {clientNotificationTargetMode === 'all'
-                          ? `${allUsers.filter((account) => account.role === UserRole.CLIENT).length} clients recevront cette notification.`
+                          ? `${notificationUsers.filter((account) => account.role === UserRole.CLIENT).length} clients recevront cette notification.`
                           : clientNotificationTargetUserId
                             ? '1 client recevra cette notification.'
                             : 'Selectionnez un client pour finaliser cet envoi.'}
@@ -3228,6 +3192,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                         Store cover
                     </button>
                     <button
+                        onClick={() => setCustomizationSection('loader')}
+                        className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${customizationSection === 'loader' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'}`}
+                    >
+                        Loader store
+                    </button>
+                    <button
                         onClick={() => setCustomizationSection('floating-cards')}
                         className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${customizationSection === 'floating-cards' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'}`}
                     >
@@ -3709,6 +3679,78 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                 </div>
                 )}
 
+                {customizationSection === 'loader' && (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                        <div className="flex items-center space-x-2">
+                            <div className="p-2 bg-indigo-100 rounded-lg">
+                                <Loader2 className="text-indigo-600" size={20} />
+                            </div>
+                            <div>
+                                <h2 className="text-lg font-bold text-slate-900 leading-tight">Loader du store</h2>
+                                <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Image ou GIF affiché au premier chargement du site</p>
+                            </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="sr-only peer"
+                                checked={startupLoaderEnabled}
+                                onChange={(e) => setStartupLoaderEnabled(e.target.checked)}
+                            />
+                            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                            <span className="ml-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">{startupLoaderEnabled ? 'Activé' : 'Désactivé'}</span>
+                        </label>
+                    </div>
+                    <div className="p-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+                        <div className="space-y-5">
+                            <ImageInput
+                                label="Image ou GIF du loader"
+                                value={startupLoaderImageUrl}
+                                onChange={setStartupLoaderImageUrl}
+                                placeholder="https://... ou upload GIF/logo"
+                            />
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Fond du loader</label>
+                                <input
+                                    type="text"
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
+                                    value={startupLoaderBackground}
+                                    onChange={(e) => setStartupLoaderBackground(e.target.value)}
+                                    placeholder="#020617 ou linear-gradient(...)"
+                                />
+                                <p className="mt-2 text-xs text-slate-500">
+                                    Utilise une couleur simple comme <code>#020617</code> ou un dégradé CSS.
+                                </p>
+                            </div>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                                Le loader s’affiche côté store pendant le bootstrap initial: catalogue, catégories, configuration du site et session client.
+                            </div>
+                        </div>
+                        <div
+                            className="relative overflow-hidden rounded-[2rem] border border-slate-200 min-h-[360px] flex items-center justify-center"
+                            style={{ background: startupLoaderBackground || '#020617' }}
+                        >
+                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.28),transparent_35%),radial-gradient(circle_at_bottom,rgba(14,165,233,0.18),transparent_30%)]" />
+                            <div className="relative flex w-full max-w-xs flex-col items-center px-6 text-center text-white">
+                                <div className="flex h-36 w-36 items-center justify-center overflow-hidden rounded-[2rem] border border-white/10 bg-white/5 shadow-2xl backdrop-blur-md">
+                                    {startupLoaderEnabled && startupLoaderImageUrl ? (
+                                        <img src={startupLoaderImageUrl} alt="Preview loader" className="h-full w-full object-contain" />
+                                    ) : siteLogo ? (
+                                        <img src={siteLogo} alt={siteName} className="h-24 w-24 object-contain" />
+                                    ) : (
+                                        <div className="text-4xl font-black uppercase tracking-[0.24em]">{(siteName || 'TB').slice(0, 2)}</div>
+                                    )}
+                                </div>
+                                <div className="mt-6 text-xs font-black uppercase tracking-[0.35em] text-white/60">Store Loading</div>
+                                <div className="mt-3 text-2xl font-black">{siteName || 'TuniBots'}</div>
+                                <p className="mt-3 text-sm leading-7 text-white/75">Le store s’affichera dès que les données critiques seront prêtes.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                )}
+
                 {customizationSection === 'colors' && (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                     <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
@@ -4018,7 +4060,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
 
                 <div className="flex justify-end pt-6 sticky bottom-0 bg-slate-50/80 backdrop-blur-md p-4 -mx-4 rounded-t-3xl border-t border-slate-200 z-10">
                     <button
-                        onClick={() => onUpdateSiteConfig({ heroSlides, heroPromoBanners, floatingBrandCards, heroSlideHeight, coverBackgroundUrl, coverListingIds, accentColor, accentHoverColor, accentSoftColor, accentTextColor, fontFamily, customFonts, headerAnnouncement, headerSearchPlaceholder, headerCtaLabel, footerTagline, footerDescription, footerEmail, footerPhone, footerWhatsapp, footerAddress, footerCopyright })}
+                        onClick={() => onUpdateSiteConfig({
+                          heroSlides,
+                          heroPromoBanners,
+                          floatingBrandCards,
+                          heroSlideHeight,
+                          coverBackgroundUrl,
+                          coverListingIds,
+                          startupLoaderEnabled,
+                          startupLoaderImageUrl,
+                          startupLoaderBackground,
+                          accentColor,
+                          accentHoverColor,
+                          accentSoftColor,
+                          accentTextColor,
+                          fontFamily,
+                          customFonts,
+                          headerAnnouncement,
+                          headerSearchPlaceholder,
+                          headerCtaLabel,
+                          footerTagline,
+                          footerDescription,
+                          footerEmail,
+                          footerPhone,
+                          footerWhatsapp,
+                          footerAddress,
+                          footerCopyright
+                        })}
                         className="bg-indigo-600 text-white font-black py-4 px-16 rounded-2xl hover:bg-indigo-700 transition shadow-2xl shadow-indigo-300 flex items-center justify-center transform hover:-translate-y-1 active:scale-95 group"
                     >
                         <LucideIcons.Save size={20} className="mr-3 group-hover:rotate-12 transition-transform" />
@@ -4105,1590 +4173,125 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
              </div>
         )}
 
-        {/* --- CATEGORIES TAB --- */}
         {activeTab === 'categories' && (
-            <div className="space-y-8">
-                {/* Edit Category Modal Overlay */}
-                {editingCategory && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto z-50 p-4 md:p-6 animate-in fade-in duration-200">
-                        <div className="my-4 w-full max-w-4xl rounded-2xl bg-white shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-3rem)] flex flex-col">
-                            <div className="p-4 md:p-6 border-b flex justify-between items-center gap-4 bg-slate-50 shrink-0">
-                                <h3 className="font-bold text-lg md:text-xl text-slate-900 flex items-center min-w-0">
-                                    <Edit className="mr-2 text-indigo-600" /> Modifier la Catégorie: {editingCategory.name}
-                                </h3>
-                                <button onClick={() => setEditingCategory(null)} className="text-slate-400 hover:text-slate-600 transition-colors"><X size={24} /></button>
-                            </div>
-                            <div className="overflow-y-auto p-4 md:p-8">
-                                <form onSubmit={handleUpdateCategory} className="grid grid-cols-1 xl:grid-cols-2 gap-6 xl:gap-8">
-                                    <div className="space-y-5">
-                                        <div>
-                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Nom de la catégorie</label>
-                                            <input className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={editCatName} onChange={e => setEditCatName(e.target.value)} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Slug (URL)</label>
-                                            <input className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={editCatSlug} onChange={e => setEditCatSlug(e.target.value)} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Position d'affichage</label>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                                                value={editCatOrder}
-                                                onChange={e => setEditCatOrder(e.target.value)}
-                                                placeholder="1 = première catégorie"
-                                            />
-                                            <p className="mt-1 text-[11px] text-slate-400">Plus le nombre est petit, plus la catégorie apparaît tôt.</p>
-                                        </div>
-                                        <div>
-                                            <IconPicker label="Icône Lucide" value={editCatIcon} onChange={setEditCatIcon} />
-                                        </div>
-                                        <div>
-                                            <ImageInput 
-                                                label="Image de Couverture"
-                                                value={editCatImage}
-                                                onChange={setEditCatImage}
-                                                placeholder="https://..."
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Dégradé de Couleur</label>
-                                            <div className="flex flex-wrap gap-2">
-                                                {GRADIENT_PRESETS.map((grad) => (
-                                                    <button 
-                                                        key={grad.name}
-                                                        type="button"
-                                                        onClick={() => setEditCatGradient(grad.class)}
-                                                        className={`w-8 h-8 rounded-full ${grad.class} border-2 ${editCatGradient === grad.class ? 'border-indigo-600 scale-110' : 'border-transparent hover:scale-105'} transition-all`}
-                                                        title={grad.name}
-                                                    />
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <button type="submit" className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-700 flex items-center justify-center w-full shadow-lg shadow-indigo-100 transition-all">
-                                            <Save size={18} className="mr-2" /> Enregistrer les modifications
-                                        </button>
-                                    </div>
-                                    <div className="flex flex-col items-center justify-center bg-slate-50 rounded-2xl p-6 border border-slate-100">
-                                        <p className="text-xs font-bold text-slate-400 mb-4 uppercase tracking-widest">Aperçu en temps réel</p>
-                                        <div className="relative rounded-2xl overflow-hidden shadow-xl aspect-[16/9] w-full group">
-                                            {editCatImage ? (
-                                                <img src={editCatImage} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                                            ) : (
-                                                <div className={`absolute inset-0 ${editCatGradient}`}></div>
-                                            )}
-                                            <div className={`absolute inset-0 opacity-40 ${editCatGradient}`}></div>
-                                            <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center">
-                                                <div className="bg-white/20 p-4 rounded-full backdrop-blur-md mb-4 border border-white/30 shadow-inner">
-                                                    <DynamicIcon name={editCatIcon} className="w-10 h-10" />
-                                                </div>
-                                                <h4 className="font-black text-2xl tracking-tight drop-shadow-lg">{editCatName || 'Titre'}</h4>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Edit SubCategory Modal Overlay */}
-                {editingSubCategory && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto z-50 p-4 md:p-6 animate-in fade-in duration-200">
-                        <div className="my-4 w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-3rem)] flex flex-col">
-                            <div className="p-4 md:p-6 border-b flex justify-between items-center gap-4 bg-slate-50 shrink-0">
-                                <h3 className="font-bold text-lg text-slate-900 flex items-center">
-                                    <Edit className="mr-2 text-indigo-600" /> Modifier Sous-Catégorie
-                                </h3>
-                                <button onClick={() => setEditingSubCategory(null)} className="text-slate-400 hover:text-slate-600 transition-colors"><X size={20} /></button>
-                            </div>
-                            <div className="p-4 md:p-6 space-y-5 overflow-y-auto">
-                                <div>
-                                    <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Nom</label>
-                                    <input className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={editSubName} onChange={e => setEditSubName(e.target.value)} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Slug</label>
-                                    <input className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={editSubSlug} onChange={e => setEditSubSlug(e.target.value)} />
-                                </div>
-                                <div>
-                                    <SubCategoryIconPicker value={editSubIcon} onChange={setEditSubIcon} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Description</label>
-                                    <textarea className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all h-24 resize-none" value={editSubDesc} onChange={e => setEditSubDesc(e.target.value)} />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Ordre</label>
-                                        <input type="number" className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={editSubOrder} onChange={e => setEditSubOrder(e.target.value)} />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Parente</label>
-                                        <select className="w-full border border-slate-200 p-3 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" value={editSubCatId} onChange={e => setEditSubCatId(e.target.value)}>
-                                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                        </select>
-                                    </div>
-                                </div>
-                                <button onClick={handleUpdateSubCategory} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all">
-                                    Enregistrer les modifications
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Create Category Form */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                    <div className="flex justify-between items-start mb-6">
-                        <h3 className="font-bold text-xl flex items-center"><LayoutGrid className="mr-2 text-slate-500" /> Nouvelle Catégorie</h3>
-                        <span className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded">Aperçu Live</span>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        {/* Form Inputs */}
-                        <div className="lg:col-span-2 space-y-4">
-                            <form onSubmit={handleCreateCategory} className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Nom</label>
-                                        <input className="w-full border p-2 rounded" placeholder="ex: Software & Apps" value={newCatName} onChange={e => setNewCatName(e.target.value)} required />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Slug (URL)</label>
-                                        <input className="w-full border p-2 rounded" placeholder="ex: software-apps" value={newCatSlug} onChange={e => setNewCatSlug(e.target.value)} required />
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Position d'affichage</label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        className="w-full border p-2 rounded"
-                                        placeholder="1 = première catégorie, 2 = deuxième..."
-                                        value={newCatOrder}
-                                        onChange={e => setNewCatOrder(e.target.value)}
-                                    />
-                                    <p className="mt-1 text-[11px] text-slate-400">Utilise 1, 2, 3... pour contrôler l'ordre dans le header, la home et les listes.</p>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <IconPicker label="Icône Lucide" value={newCatIcon} onChange={setNewCatIcon} />
-                                    </div>
-                                    <div>
-                                        <ImageInput 
-                                            label="Image Cover"
-                                            value={newCatImage}
-                                            onChange={setNewCatImage}
-                                            placeholder="https://..."
-                                        />
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Style Gradient</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {GRADIENT_PRESETS.map((grad) => (
-                                            <button 
-                                                key={grad.name}
-                                                type="button"
-                                                onClick={() => setNewCatGradient(grad.class)}
-                                                className={`w-8 h-8 rounded-full ${grad.class} border-2 transition-all ${newCatGradient === grad.class ? 'border-black scale-110' : 'border-transparent hover:scale-105'}`}
-                                                title={grad.name}
-                                            />
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white p-3 rounded-lg font-bold shadow-lg shadow-slate-200 transition-all">Créer la Catégorie</button>
-                            </form>
-                        </div>
-
-                        {/* Live Preview Card */}
-                        <div className="lg:col-span-1">
-                            <label className="block text-xs font-bold uppercase text-slate-500 mb-2 text-center">Aperçu Carte</label>
-                            <div className="relative rounded-2xl overflow-hidden shadow-xl aspect-[4/5] group cursor-pointer w-full max-w-[240px] mx-auto border border-slate-200">
-                                {/* Image Layer */}
-                                {newCatImage ? (
-                                    <img src={newCatImage} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
-                                ) : (
-                                    <div className={`absolute inset-0 ${newCatGradient} opacity-50`}></div>
-                                )}
-                                
-                                {/* Gradient Overlay */}
-                                <div className={`absolute inset-0 opacity-60 transition-opacity group-hover:opacity-70 ${newCatGradient}`}></div>
-                                
-                                {/* Content */}
-                                <div className="absolute inset-0 p-6 flex flex-col items-center justify-center text-center text-white z-10">
-                                    <div className="bg-white/20 p-4 rounded-full backdrop-blur-md mb-4 border border-white/30 shadow-inner group-hover:scale-110 transition-transform">
-                                        <DynamicIcon name={newCatIcon} className="w-8 h-8 text-white" />
-                                    </div>
-                                    <h3 className="text-2xl font-black tracking-tight drop-shadow-md">{newCatName || 'Titre Catégorie'}</h3>
-                                    <p className="text-sm font-medium opacity-90 mt-2">0 Produits</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Sub Categories Creation & List */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
-                        <h3 className="font-bold text-lg mb-4">Ajouter Sous-Catégorie</h3>
-                        <form onSubmit={handleCreateSubCategory} className="space-y-4">
-                            <select className="w-full border p-2 rounded" value={selectedCatForSub} onChange={e => setSelectedCatForSub(e.target.value)} required>
-                                <option value="">Catégorie Parente</option>
-                                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
-                            
-                            <input className="w-full border p-2 rounded" placeholder="Nom (ex: Chatbots)" value={newSubCatName} onChange={e => setNewSubCatName(e.target.value)} required />
-                            <input className="w-full border p-2 rounded" placeholder="Slug (ex: chatbots)" value={newSubCatSlug} onChange={e => setNewSubCatSlug(e.target.value)} required />
-                            
-                            <div className="grid grid-cols-1 gap-3">
-                                <SubCategoryIconPicker value={newSubCatIcon} onChange={setNewSubCatIcon} />
-                            </div>
-                            <div className="grid grid-cols-1 gap-2">
-                                <input type="number" className="w-full border p-2 rounded" placeholder="Ordre" value={newSubCatOrder} onChange={e => setNewSubCatOrder(e.target.value)} />
-                            </div>
-                            
-                            <input className="w-full border p-2 rounded" placeholder="Description courte (ex: ChatGPT, Gemini...)" value={newSubCatDesc} onChange={e => setNewSubCatDesc(e.target.value)} />
-                            
-                            {/* Card Preview */}
-                            {newSubCatName && (
-                                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-start space-x-3 opacity-80">
-                                    <div className="p-2 bg-white rounded-lg shadow-sm"><DynamicIcon name={newSubCatIcon} className="w-5 h-5 text-indigo-600"/></div>
-                                    <div><div className="font-bold text-sm">{newSubCatName}</div><div className="text-[10px] text-slate-500">{newSubCatDesc || 'Description...'}</div></div>
-                                </div>
-                            )}
-
-                            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded font-bold transition-colors">Ajouter la Carte</button>
-                        </form>
-                    </div>
-
-                    <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                        <div className="px-6 py-4 border-b border-slate-100 font-bold bg-slate-50">Structure du Site</div>
-                        <div className="max-h-[500px] overflow-y-auto">
-                            {orderedCategories.map((cat, index) => (
-                                <div key={cat.id} className="border-b border-slate-50 last:border-0">
-                                    <div className="px-6 py-3 bg-slate-50/50 flex justify-between items-center">
-                                        <div className="font-bold text-slate-900 flex items-center">
-                                            {cat.imageUrl ? (
-                                                <img src={cat.imageUrl} className="w-8 h-5 object-cover rounded mr-2 border border-slate-200" />
-                                            ) : (
-                                                <div className={`w-8 h-5 rounded mr-2 ${cat.gradient || 'bg-slate-200'}`} />
-                                            )}
-                                            <DynamicIcon name={cat.icon} className="w-4 h-4 mr-2 text-slate-500" /> 
-                                            {cat.name}
-                                            <span className="ml-3 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-600">
-                                                Ordre {cat.order || 0}
-                                            </span>
-                                            <button onClick={() => startEditingCategory(cat)} className="ml-2 text-slate-400 hover:text-indigo-600 transition-colors" title="Modifier la catégorie"><Edit size={14} /></button>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                            <button
-                                                type="button"
-                                                onClick={() => handleMoveCategory(cat.id, 'up')}
-                                                disabled={index === 0}
-                                                className="rounded-lg p-1.5 text-slate-400 hover:bg-white hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-30"
-                                                title="Monter"
-                                            >
-                                                <LucideIcons.ChevronUp size={15} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleMoveCategory(cat.id, 'down')}
-                                                disabled={index === orderedCategories.length - 1}
-                                                className="rounded-lg p-1.5 text-slate-400 hover:bg-white hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-30"
-                                                title="Descendre"
-                                            >
-                                                <LucideIcons.ChevronDown size={15} />
-                                            </button>
-                                            <button onClick={() => handleDeleteCategory(cat.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
-                                        </div>
-                                    </div>
-                                    <div className="px-6 py-3 grid grid-cols-2 md:grid-cols-3 gap-3">
-                                        {[...(cat.subCategories || [])]
-                                          .sort((a, b) => (a.order || 0) - (b.order || 0) || a.name.localeCompare(b.name))
-                                          .map((sub, subIndex, orderedSubCategories) => (
-                                            <div key={sub.id} className="bg-white border border-slate-100 p-3 rounded-lg flex justify-between items-start gap-3 group hover:border-indigo-200 transition-colors">
-                                                <div className="flex items-start space-x-3">
-                                                    <div className="p-1.5 bg-slate-50 rounded text-slate-500"><DynamicIcon name={sub.icon || 'Package'} className="w-4 h-4" /></div>
-                                                    <div>
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="font-bold text-xs text-slate-900">{sub.name}</div>
-                                                            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-black text-slate-500">
-                                                                {sub.order || subIndex + 1}
-                                                            </span>
-                                                        </div>
-                                                        <div className="text-[10px] text-slate-400 line-clamp-1">{sub.description}</div>
-                                                    </div>
-                                                </div>
-                                                <div className="flex flex-col space-y-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => handleMoveSubCategory(cat.id, sub.id, 'up')}
-                                                      disabled={subIndex === 0}
-                                                      className="text-slate-400 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-30"
-                                                      title="Monter"
-                                                    >
-                                                      <LucideIcons.ChevronUp size={12} />
-                                                    </button>
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => handleMoveSubCategory(cat.id, sub.id, 'down')}
-                                                      disabled={subIndex === orderedSubCategories.length - 1}
-                                                      className="text-slate-400 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-30"
-                                                      title="Descendre"
-                                                    >
-                                                      <LucideIcons.ChevronDown size={12} />
-                                                    </button>
-                                                    <button onClick={() => startEditingSubCategory(sub)} className="text-slate-400 hover:text-indigo-600"><Edit size={12} /></button>
-                                                    <button onClick={() => handleDeleteSubCategory(sub.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={12} /></button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        {(!cat.subCategories || cat.subCategories.length === 0) && <div className="text-xs text-slate-300 italic col-span-full">Aucune sous-catégorie</div>}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </div>
+          <AdminCategoriesSection
+            categories={categories}
+            orderedCategories={orderedCategories}
+            editingCategory={editingCategory}
+            editingSubCategory={editingSubCategory}
+            editCatName={editCatName}
+            editCatSlug={editCatSlug}
+            editCatIcon={editCatIcon}
+            editCatImage={editCatImage}
+            editCatGradient={editCatGradient}
+            editCatOrder={editCatOrder}
+            editSubName={editSubName}
+            editSubSlug={editSubSlug}
+            editSubIcon={editSubIcon}
+            editSubDesc={editSubDesc}
+            editSubOrder={editSubOrder}
+            editSubCatId={editSubCatId}
+            newCatName={newCatName}
+            newCatSlug={newCatSlug}
+            newCatIcon={newCatIcon}
+            newCatImage={newCatImage}
+            newCatGradient={newCatGradient}
+            newCatOrder={newCatOrder}
+            selectedCatForSub={selectedCatForSub}
+            newSubCatName={newSubCatName}
+            newSubCatSlug={newSubCatSlug}
+            newSubCatIcon={newSubCatIcon}
+            newSubCatDesc={newSubCatDesc}
+            newSubCatOrder={newSubCatOrder}
+            GRADIENT_PRESETS={GRADIENT_PRESETS}
+            DynamicIcon={DynamicIcon}
+            IconPicker={IconPicker}
+            SubCategoryIconPicker={SubCategoryIconPicker}
+            ImageInput={ImageInput}
+            setEditingCategory={setEditingCategory}
+            setEditingSubCategory={setEditingSubCategory}
+            setEditCatName={setEditCatName}
+            setEditCatSlug={setEditCatSlug}
+            setEditCatIcon={setEditCatIcon}
+            setEditCatImage={setEditCatImage}
+            setEditCatGradient={setEditCatGradient}
+            setEditCatOrder={setEditCatOrder}
+            setEditSubName={setEditSubName}
+            setEditSubSlug={setEditSubSlug}
+            setEditSubIcon={setEditSubIcon}
+            setEditSubDesc={setEditSubDesc}
+            setEditSubOrder={setEditSubOrder}
+            setEditSubCatId={setEditSubCatId}
+            setNewCatName={setNewCatName}
+            setNewCatSlug={setNewCatSlug}
+            setNewCatIcon={setNewCatIcon}
+            setNewCatImage={setNewCatImage}
+            setNewCatGradient={setNewCatGradient}
+            setNewCatOrder={setNewCatOrder}
+            setSelectedCatForSub={setSelectedCatForSub}
+            setNewSubCatName={setNewSubCatName}
+            setNewSubCatSlug={setNewSubCatSlug}
+            setNewSubCatIcon={setNewSubCatIcon}
+            setNewSubCatDesc={setNewSubCatDesc}
+            setNewSubCatOrder={setNewSubCatOrder}
+            handleUpdateCategory={handleUpdateCategory}
+            handleUpdateSubCategory={handleUpdateSubCategory}
+            handleCreateCategory={handleCreateCategory}
+            handleCreateSubCategory={handleCreateSubCategory}
+            startEditingCategory={startEditingCategory}
+            startEditingSubCategory={startEditingSubCategory}
+            handleMoveCategory={handleMoveCategory}
+            handleMoveSubCategory={handleMoveSubCategory}
+            handleDeleteCategory={handleDeleteCategory}
+            handleDeleteSubCategory={handleDeleteSubCategory}
+          />
         )}
-
-        {/* --- CREATE LISTING TAB --- */}
-        {activeTab === 'create' && (
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="space-y-6">
-              <AdminPanelCard
-                title={editingListing ? 'Modification produit' : 'Nouveau produit'}
-                description="Les actions principales restent accessibles en haut et en bas de la page. Tu peux enregistrer, annuler, prévisualiser ou revenir au dashboard à tout moment."
-                action={editingListing ? (
-                  <button type="button" onClick={resetListingForm} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">
-                    Annuler l'édition
-                  </button>
-                ) : null}
-              >
-            <form id="admin-listing-form" onSubmit={handleSubmitListing} className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                   <label className="block text-sm font-medium text-slate-700 mb-1">Catégorie</label>
-                   <select className="w-full border rounded p-2" value={newListingCatId} onChange={e => setNewListingCatId(e.target.value)} required>
-                       <option value="">-- Sélectionner --</option>
-                       {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                   </select>
-                </div>
-                <div>
-                   <label className="block text-sm font-medium text-slate-700 mb-1">Sous-Catégorie</label>
-                   <select className="w-full border rounded p-2" value={newListingSubCatId} onChange={e => setNewListingSubCatId(e.target.value)} disabled={!newListingCatId}>
-                       <option value="">-- Aucune --</option>
-                       {selectedCategoryObj?.subCategories?.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                   </select>
-                </div>
-              </div>
-
-              <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Jeu / Marque (ex: Netflix, Valorant)</label>
-                  <input type="text" className="w-full border rounded p-2" value={newListingGame} onChange={e => setNewListingGame(e.target.value)} required />
-              </div>
-
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center">
-                      <Zap size={16} className="mr-2 text-yellow-500" /> Disponibilité & Livraison
-                  </label>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-3">
-                          <label className="block text-xs font-bold uppercase text-slate-500">Type de Stock</label>
-                          <div className="flex space-x-2">
-                              <button 
-                                type="button"
-                                onClick={() => setNewListingIsInstant(true)}
-                                className={`flex-1 p-3 rounded-lg border text-sm font-bold flex items-center justify-center transition-all ${newListingIsInstant ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}
-                              >
-                                  <Zap size={16} className="mr-2" /> Instantané
-                              </button>
-                              <button 
-                                type="button"
-                                onClick={() => setNewListingIsInstant(false)}
-                                className={`flex-1 p-3 rounded-lg border text-sm font-bold flex items-center justify-center transition-all ${!newListingIsInstant ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}
-                              >
-                                  <Package size={16} className="mr-2" /> Sur Commande
-                              </button>
-                          </div>
-                      </div>
-                      {!newListingIsInstant && (
-                          <div className="animate-in fade-in slide-in-from-left-2 duration-300">
-                              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Temps d'attente estimé</label>
-                              <input 
-                                type="text" 
-                                className="w-full border rounded p-2 bg-white" 
-                                placeholder="ex: 2-4 heures, 1 jour..." 
-                                value={newListingPrepTime} 
-                                onChange={e => setNewListingPrepTime(e.target.value)} 
-                                required={!newListingIsInstant}
-                              />
-                          </div>
-                      )}
-                  </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Titre du Produit</label>
-                <input type="text" className="w-full border rounded p-2" value={newListingTitle} onChange={e => setNewListingTitle(e.target.value)} required />
-              </div>
-
-              {user.role === UserRole.ADMIN && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Source</label>
-                  <input
-                    type="url"
-                    className="w-full border rounded p-2"
-                    value={newListingSource}
-                    onChange={e => setNewListingSource(e.target.value)}
-                    placeholder="https://..."
-                  />
-                  <p className="mt-1 text-xs text-slate-500">Optionnel. Lien vers la page source du produit pour l’achat.</p>
-                </div>
-              )}
-
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center">
-                      <Package size={16} className="mr-2 text-indigo-600" /> Format de Vente
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setNewListingIsPackage(false)}
-                        className={`p-3 rounded-lg border text-sm font-bold transition-all ${!newListingIsPackage ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}
-                      >
-                        Produit simple
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewListingIsPackage(true)}
-                        className={`p-3 rounded-lg border text-sm font-bold transition-all ${newListingIsPackage ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}
-                      >
-                        Package
-                      </button>
-                  </div>
-                  <p className="mt-3 text-xs text-slate-500">
-                    Un package regroupe plusieurs produits existants et affiche automatiquement l’économie client.
-                  </p>
-              </div>
-
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center">
-                      <Shield size={16} className="mr-2 text-indigo-600" /> Type de Produit & Accès
-                  </label>
-                  <div className="space-y-4">
-                      <div className="grid grid-cols-3 gap-2">
-                          {Object.values(ProductType).map((type) => (
-                              <button
-                                  key={type}
-                                  type="button"
-                                  onClick={() => setNewListingProductType(type)}
-                                  disabled={newListingIsPackage}
-                                  className={`p-2 rounded-lg border text-[10px] font-bold uppercase transition-all ${newListingProductType === type ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'}`}
-                              >
-                                  {type === ProductType.STANDARD ? 'Standard' : type === ProductType.LOGIN_CREDENTIALS ? 'Logins Pool' : 'Clé Unique'}
-                              </button>
-                          ))}
-                      </div>
-                      {newListingIsPackage && (
-                          <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
-                              Le package utilise automatiquement un accès standard. Les éléments inclus restent gérés dans leur propre stock.
-                          </div>
-                      )}
-
-                      {!newListingIsPackage && newListingProductType === ProductType.LOGIN_CREDENTIALS && (
-                          <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                              <div className="flex justify-between items-center">
-                                  <label className="text-xs font-bold uppercase text-slate-500">Pool de Logins/Passwords</label>
-                                  <button type="button" onClick={addCredentialField} className="text-xs text-indigo-600 font-bold hover:underline flex items-center">
-                                      <Plus size={12} className="mr-1" /> Ajouter
-                                  </button>
-                              </div>
-                              <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                                  {newListingCredentials.map((cred, idx) => (
-                                      <div key={idx} className="flex gap-2 items-center">
-                                          <input 
-                                              placeholder="Login" 
-                                              className="flex-1 border rounded p-1.5 text-xs" 
-                                              value={cred.username} 
-                                              onChange={(e) => updateCredentialField(idx, 'username', e.target.value)}
-                                          />
-                                          <input 
-                                              placeholder="Password" 
-                                              className="flex-1 border rounded p-1.5 text-xs" 
-                                              value={cred.password} 
-                                              onChange={(e) => updateCredentialField(idx, 'password', e.target.value)}
-                                          />
-                                          <button type="button" onClick={() => removeCredentialField(idx)} className="text-red-500 hover:text-red-700">
-                                              <Trash2 size={14} />
-                                          </button>
-                                      </div>
-                                  ))}
-                                  {newListingCredentials.length === 0 && (
-                                      <div className="text-center py-4 text-slate-400 text-xs italic border border-dashed rounded-lg">
-                                          Aucun compte ajouté. Cliquez sur "Ajouter" pour commencer le pool.
-                                      </div>
-                                  )}
-                              </div>
-                          </div>
-                      )}
-
-                      {!newListingIsPackage && newListingProductType === ProductType.KEY && (
-                          <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-                              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Clé du Produit (Sera envoyée à tous les clients)</label>
-                              <input 
-                                  type="text" 
-                                  className="w-full border rounded p-2 bg-white text-sm" 
-                                  placeholder="ex: XXXXX-XXXXX-XXXXX" 
-                                  value={newListingStaticKey} 
-                                  onChange={e => setNewListingStaticKey(e.target.value)} 
-                              />
-                          </div>
-                      )}
-                  </div>
-              </div>
-
-              {newListingIsPackage && (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 flex items-center">
-                        <Package size={16} className="mr-2 text-indigo-600" /> Composition du Package
-                      </label>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Sélectionne plusieurs produits déjà présents dans le stock puis ajuste leur quantité.
-                      </p>
-                    </div>
-                    <div className="min-w-[220px] rounded-xl bg-white border border-slate-200 p-3 text-sm">
-                      <div className="flex justify-between text-slate-500">
-                        <span>Valeur séparée</span>
-                        <span className="font-bold text-slate-900">{packageOriginalTotal.toFixed(2)} TND</span>
-                      </div>
-                      <div className="mt-2 flex justify-between text-slate-500">
-                        <span>Prix package</span>
-                        <span className="font-bold text-slate-900">{draftPackagePrice.toFixed(2)} TND</span>
-                      </div>
-                      <div className="mt-2 flex justify-between text-emerald-600">
-                        <span>Gain client</span>
-                        <span className="font-black">{packageSavings.toFixed(2)} TND</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 max-h-80 overflow-y-auto pr-2">
-                    {availablePackageListings.map((listing) => {
-                      const selectedItem = newListingPackageItems.find((item) => item.includedListingId === listing.id);
-                      const checked = Boolean(selectedItem);
-
-                      return (
-                        <label key={listing.id} className={`flex items-center gap-4 rounded-xl border p-3 transition-all ${checked ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white'}`}>
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4"
-                            checked={checked}
-                            onChange={() => togglePackageItem(listing.id)}
-                          />
-                          <div className="h-12 w-12 overflow-hidden rounded-lg border border-slate-100">
-                            <ListingImage listing={listing} />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="font-bold text-slate-900 truncate">{listing.title}</div>
-                            <div className="text-xs text-slate-500">
-                              {getListingFinalPrice(listing).toFixed(2)} TND • Stock {listing.stock}
-                            </div>
-                          </div>
-                          <input
-                            type="number"
-                            min="1"
-                            value={selectedItem?.quantity || 1}
-                            disabled={!checked}
-                            onChange={(e) => updatePackageItemQuantity(listing.id, Number(e.target.value))}
-                            className="w-20 rounded-lg border border-slate-200 px-2 py-2 text-sm"
-                          />
-                        </label>
-                      );
-                    })}
-                    {availablePackageListings.length === 0 && (
-                      <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                        Aucun produit standard disponible pour composer un package.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-                  <ImageInput
-                    label={newListingIsPackage ? 'Image Principale (optionnelle)' : 'Image Principale'}
-                    value={newListingImageUrl}
-                    onChange={setNewListingImageUrl}
-                    placeholder={newListingIsPackage ? 'Optionnel: mosaïque auto si vide' : 'https://...'}
-                  />
-                  <ImageInput 
-                    label="Logo Spécifique (Optionnel)"
-                    value={newListingLogoUrl}
-                    onChange={setNewListingLogoUrl}
-                    placeholder="https://..."
-                  />
-              </div>
-
-              <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Galerie Images (URLs séparées par des virgules)</label>
-                  <input type="text" className="w-full border rounded p-2" value={newListingGallery} onChange={e => setNewListingGallery(e.target.value)} placeholder="url1, url2, url3" />
-              </div>
-
-              <div className="bg-indigo-50 p-4 rounded-md border border-indigo-100">
-                <button type="button" onClick={handleGenerateDescription} disabled={!newListingGame || isGenerating} className="text-sm bg-white border border-indigo-300 text-indigo-700 px-3 py-2 rounded font-medium hover:bg-indigo-50 flex items-center">
-                  {isGenerating ? <Loader2 className="animate-spin mr-1" size={14} /> : <Zap size={14} className="mr-1" />} Générer Description IA
-                </button>
-              </div>
-
-              <RichTextEditor
-                label="Description"
-                value={generatedDescription}
-                onChange={setGeneratedDescription}
-                required
-              />
-
-              {!newListingIsPackage && (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="mb-4">
-                    <h3 className="text-sm font-black text-slate-800">Informations page produit</h3>
-                    <p className="mt-1 text-xs text-slate-500">Ces champs alimentent la page produit et les popups cliquables.</p>
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    <div>
-                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Platform</label>
-                      <input className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={newListingPlatform} onChange={(e) => setNewListingPlatform(e.target.value)} placeholder="Roblox / Steam / Xbox" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Region du produit</label>
-                      <RegionSelect
-                        value={newListingRegion}
-                        onChange={(region) => {
-                          setNewListingRegion(region);
-                          if (region !== GLOBAL_REGION_OPTION) {
-                            setNewListingActivationCountry(region);
-                          }
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Pays d'activation</label>
-                      <CountrySelect value={newListingActivationCountry} onChange={setNewListingActivationCountry} />
-                    </div>
-                  </div>
-                  <div className="mt-5 grid grid-cols-1 gap-5">
-                    <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <input className="mb-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold" value={newListingRestrictionsTitle} onChange={(e) => setNewListingRestrictionsTitle(e.target.value)} placeholder="Check Restrictions" />
-                      <RichTextEditor label="Restrictions popup content" value={newListingRestrictionsContent} onChange={setNewListingRestrictionsContent} />
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <input className="mb-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold" value={newListingActivationGuideTitle} onChange={(e) => setNewListingActivationGuideTitle(e.target.value)} placeholder="Activation Guide" />
-                      <RichTextEditor label="Activation guide popup content" value={newListingActivationGuideContent} onChange={setNewListingActivationGuideContent} />
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <label className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Titre du popup region</label>
-                      <input className="mb-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold" value={newListingRegionTitle} onChange={(e) => setNewListingRegionTitle(e.target.value)} placeholder="Region" />
-                      <RichTextEditor label="Region popup content" value={newListingRegionContent} onChange={setNewListingRegionContent} />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {!newListingIsPackage && (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <h3 className="text-sm font-black text-slate-800">System requirements</h3>
-                      <p className="mt-1 text-xs text-slate-500">Active cette section pour les jeux PC et ajoute les informations minimum/recommandées.</p>
-                    </div>
-                    <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700">
-                      <input type="checkbox" checked={newListingSystemRequirementsEnabled} onChange={(e) => setNewListingSystemRequirementsEnabled(e.target.checked)} />
-                      Afficher la section
-                    </label>
-                  </div>
-
-                  {newListingSystemRequirementsEnabled && (
-                    <div className="space-y-5">
-                      <div>
-                        <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">System</label>
-                        <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 md:w-64" value={newListingSystemRequirementsPlatform} onChange={(e) => setNewListingSystemRequirementsPlatform(e.target.value)}>
-                          {SYSTEM_PLATFORM_OPTIONS.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                        <div className="rounded-xl border border-slate-200 bg-white p-4">
-                          <h4 className="mb-4 text-sm font-black text-slate-800">Minimum System Requirements</h4>
-                          <div className="grid grid-cols-1 gap-3">
-                            <RequirementSelect label="OS" value={newListingMinimumOs} onChange={setNewListingMinimumOs} options={SYSTEM_OS_OPTIONS} />
-                            <RequirementSelect label="Memory" value={newListingMinimumMemory} onChange={setNewListingMinimumMemory} options={SYSTEM_MEMORY_OPTIONS} />
-                            <RequirementSelect label="Storage" value={newListingMinimumStorage} onChange={setNewListingMinimumStorage} options={SYSTEM_STORAGE_OPTIONS} />
-                            <RequirementSelect label="Processor" value={newListingMinimumProcessor} onChange={setNewListingMinimumProcessor} options={SYSTEM_PROCESSOR_OPTIONS} />
-                            <RequirementSelect label="Graphics" value={newListingMinimumGraphics} onChange={setNewListingMinimumGraphics} options={SYSTEM_GRAPHICS_OPTIONS} />
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-4">
-                          <h4 className="mb-4 text-sm font-black text-slate-800">Recommended System Requirements</h4>
-                          <div className="grid grid-cols-1 gap-3">
-                            <RequirementSelect label="OS" value={newListingRecommendedOs} onChange={setNewListingRecommendedOs} options={SYSTEM_OS_OPTIONS} />
-                            <RequirementSelect label="Memory" value={newListingRecommendedMemory} onChange={setNewListingRecommendedMemory} options={SYSTEM_MEMORY_OPTIONS} />
-                            <RequirementSelect label="Storage" value={newListingRecommendedStorage} onChange={setNewListingRecommendedStorage} options={SYSTEM_STORAGE_OPTIONS} />
-                            <RequirementSelect label="Processor" value={newListingRecommendedProcessor} onChange={setNewListingRecommendedProcessor} options={SYSTEM_PROCESSOR_OPTIONS} />
-                            <RequirementSelect label="Graphics" value={newListingRecommendedGraphics} onChange={setNewListingRecommendedGraphics} options={SYSTEM_GRAPHICS_OPTIONS} />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {!newListingIsPackage && (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="mb-4 flex items-start justify-between gap-4">
-                    <div>
-                      <label className="block text-sm font-black text-slate-800">Variantes du produit</label>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Donnez un nom au choix, par exemple Durée, Taille ou Type de compte. Le store affichera automatiquement “À partir de” avec le prix le plus bas.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={addListingVariant}
-                      className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700"
-                    >
-                      Ajouter variante
-                    </button>
-                  </div>
-                  <div className="mb-4">
-                    <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Nom du choix</label>
-                    <input
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                      placeholder="Ex: Durée, Taille, Type de compte"
-                      value={newListingVariantLabel}
-                      onChange={(e) => setNewListingVariantLabel(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    {newListingVariants.map((variant, index) => (
-                      <div key={index} className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[1fr_130px_90px_40px]">
-                        <input
-                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="Nom variante, ex: 1 mois"
-                          value={variant.name}
-                          onChange={(e) => updateListingVariant(index, { name: e.target.value })}
-                        />
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="Prix"
-                          value={variant.price}
-                          onChange={(e) => updateListingVariant(index, { price: Number(e.target.value) })}
-                        />
-                        <input
-                          type="number"
-                          min="0"
-                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="Ordre"
-                          value={variant.order || index + 1}
-                          onChange={(e) => updateListingVariant(index, { order: Number(e.target.value) })}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeListingVariant(index)}
-                          className="rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
-                          title="Supprimer la variante"
-                        >
-                          <Trash2 size={16} className="mx-auto" />
-                        </button>
-                      </div>
-                    ))}
-                    {newListingVariants.length === 0 && (
-                      <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-400">
-                        Aucune variante. Le produit utilisera le prix simple ci-dessous.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Prix (TND)</label>
-                  <input type="number" step="0.01" className="w-full border rounded p-2" value={newListingPrice} onChange={(e) => setNewListingPrice(e.target.value)} required />
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Type de remise</label>
-                    <select className="w-full border rounded p-2" value={newListingDiscountType} onChange={(e) => setNewListingDiscountType(e.target.value as DiscountType)}>
-                      <option value={DiscountType.NONE}>Aucune</option>
-                      <option value={DiscountType.PERCENT}>Pourcentage (%)</option>
-                      <option value={DiscountType.AMOUNT}>Montant (TND)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      {newListingDiscountType === DiscountType.AMOUNT ? 'Montant de remise (TND)' : 'Valeur de remise'}
-                    </label>
-                    <input
-                      type="number"
-                      step={newListingDiscountType === DiscountType.AMOUNT ? '0.01' : '1'}
-                      min="0"
-                      max={newListingDiscountType === DiscountType.PERCENT ? '95' : undefined}
-                      className="w-full border rounded p-2"
-                      value={newListingDiscount}
-                      onChange={(e) => setNewListingDiscount(e.target.value)}
-                      placeholder="0"
-                      disabled={newListingDiscountType === DiscountType.NONE}
-                    />
-                    <p className="mt-1 text-xs text-slate-500">La promo peut etre en pourcentage ou en dinars. Le prix final sera calculé automatiquement.</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* SEO Section */}
-              <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 space-y-4">
-                  <h4 className="font-bold text-slate-900 flex items-center">
-                      <LayoutGrid size={18} className="mr-2 text-indigo-600" /> Optimisation SEO
-                  </h4>
-                  <p className="text-xs text-slate-500 mb-4">Optimisez la visibilité de ce produit sur Google et les moteurs de recherche.</p>
-                  
-                  <div className="space-y-4">
-                      <div>
-                          <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Meta Title</label>
-                          <input 
-                            type="text" 
-                            className="w-full border rounded p-2 bg-white" 
-                            placeholder="Titre pour Google (max 60 chars)" 
-                            value={newListingMetaTitle} 
-                            onChange={e => setNewListingMetaTitle(e.target.value)} 
-                          />
-                      </div>
-                      <div>
-                          <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Meta Description</label>
-                          <textarea 
-                            className="w-full border rounded p-2 bg-white h-20" 
-                            placeholder="Description pour Google (max 160 chars)" 
-                            value={newListingMetaDesc} 
-                            onChange={e => setNewListingMetaDesc(e.target.value)} 
-                          />
-                      </div>
-                      <div>
-                          <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Mots-clés (séparés par des virgules)</label>
-                          <input 
-                            type="text" 
-                            className="w-full border rounded p-2 bg-white" 
-                            placeholder="ex: netflix tunisie, abonnement pas cher..." 
-                            value={newListingKeywords} 
-                            onChange={e => setNewListingKeywords(e.target.value)} 
-                          />
-                      </div>
-                  </div>
-
-                  {/* Google Preview */}
-                  <div className="mt-6 p-4 bg-white rounded-lg border border-slate-200 shadow-sm">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Aperçu Google Search</p>
-                      <div className="max-w-[600px]">
-                          <div className="text-[#1a0dab] text-xl hover:underline cursor-pointer truncate">
-                              {newListingMetaTitle || newListingTitle || 'Titre du produit sur Google'}
-                          </div>
-                          <div className="text-[#006621] text-sm truncate mb-1">
-                              tunibots.com › products › {newListingTitle.toLowerCase().replace(/\s+/g, '-')}
-                          </div>
-                          <div className="text-[#545454] text-sm line-clamp-2">
-                              {newListingMetaDesc || richTextToPlainText(generatedDescription) || 'La description de votre produit apparaîtra ici dans les résultats de recherche Google...'}
-                          </div>
-                      </div>
-                  </div>
-              </div>
-
-              <AdminStickyActionBar
-                note="Les boutons restent visibles pendant les longs formulaires pour éviter les allers-retours."
-                actions={
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => navigateTo('admin-dashboard')}
-                      className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      Retour
-                    </button>
-                    <button
-                      type="button"
-                      onClick={resetListingForm}
-                      className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openDraftPreview}
-                      className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-700 hover:bg-indigo-100"
-                    >
-                      Prévisualiser
-                    </button>
-                    <button type="submit" className="inline-flex items-center rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">
-                      <Save size={16} className="mr-2" />
-                      {editingListing ? 'Enregistrer les modifications' : "Créer l'offre"}
-                    </button>
-                  </>
-                }
-              />
-            </form>
-              </AdminPanelCard>
-            </div>
-
-            <div className="space-y-6 xl:sticky xl:top-28 xl:self-start">
-              <AdminPanelCard title="Prévisualisation" description="Le résumé reste visible même quand le formulaire est long." className="overflow-visible">
-                <div id="listing-live-preview" className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-slate-950 text-white">
-                  <div className="relative h-48 overflow-hidden">
-                    {draftListingPreview.imageUrl ? (
-                      <img src={draftListingPreview.imageUrl} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="h-full w-full bg-[radial-gradient(circle_at_top_left,#334155,#0f172a_65%,#020617)]" />
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/35 to-transparent" />
-                    <div className="absolute left-4 top-4 inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-white">
-                      {draftListingPreview.isPackage ? 'Pack' : 'Produit'}
-                    </div>
-                  </div>
-                  <div className="space-y-4 p-5">
-                    <div>
-                      <div className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">{selectedCategoryName}</div>
-                      <h3 className="mt-2 text-2xl font-black">{draftListingPreview.title}</h3>
-                      <p className="mt-2 text-sm text-slate-300">{draftListingPreview.subtitle}</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Prix</div>
-                        <div className="mt-1 text-lg font-black">{draftListingPreview.price ? `${draftListingPreview.price.toFixed(2)} TND` : 'À définir'}</div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Livraison</div>
-                        <div className="mt-1 text-lg font-black">{draftListingPreview.isInstant ? 'Instantanée' : 'Manuelle'}</div>
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
-                      {draftListingPreview.discountType !== DiscountType.NONE && draftListingPreview.discountValue > 0
-                        ? `Promotion active: ${draftListingPreview.discountType === DiscountType.PERCENT ? `${draftListingPreview.discountValue}%` : `${draftListingPreview.discountValue.toFixed(2)} TND`} de remise.`
-                        : 'Aucune promotion configurée pour le moment.'}
-                    </div>
-                  </div>
-                </div>
-              </AdminPanelCard>
-
-              <AdminPanelCard title="Raccourcis" description="Pour simplifier la vie d’un admin non technique.">
-                <div className="space-y-3 text-sm text-slate-600">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    Le bouton <span className="font-black text-slate-900">Enregistrer</span> reste disponible en sticky même au milieu de la page.
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <span className="font-black text-slate-900">Prévisualiser</span> ramène directement à cette carte pour vérifier le rendu avant publication.
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <span className="font-black text-slate-900">Retour</span> renvoie au dashboard sans toucher aux routes existantes.
-                  </div>
-                </div>
-              </AdminPanelCard>
-            </div>
-          </div>
-        )}
-        
-        {activeTab === 'users' && user.role === UserRole.ADMIN && (
-            <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-black text-slate-900">Gestion des Utilisateurs</h2>
-                    <div className="flex bg-slate-100 p-1 rounded-xl">
-                        <button 
-                            onClick={() => setUserSubTab('all')}
-                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${userSubTab === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            Tous les Utilisateurs
-                        </button>
-                        <button 
-                            onClick={() => setUserSubTab('roles')}
-                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${userSubTab === 'roles' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            Rôles & Permissions
-                        </button>
-                    </div>
-                </div>
-
-                {userSubTab === 'all' ? (
-                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                        <div className="px-6 py-4 border-b border-slate-100 font-bold bg-slate-50">Liste des Utilisateurs</div>
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left">
-                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-bold">
-                                    <tr>
-                                        <th className="px-6 py-3">Utilisateur</th>
-                                        <th className="px-6 py-3">Email</th>
-                                        <th className="px-6 py-3">Rôle</th>
-                                        <th className="px-6 py-3">Solde</th>
-                                        <th className="px-6 py-3">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {allUsers.map(u => (
-                                        <tr key={u.id} className="hover:bg-slate-50 transition-colors">
-                                            <td className="px-6 py-4 flex items-center space-x-3">
-                                                <img src={u.avatarUrl} className="w-8 h-8 rounded-full" />
-                                                <span className="font-bold text-slate-900">{u.username}</span>
-                                            </td>
-                                            <td className="px-6 py-4 text-sm text-slate-600">{u.email}</td>
-                                            <td className="px-6 py-4">
-                                                <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${u.role === UserRole.ADMIN ? 'bg-red-100 text-red-700' : u.role === UserRole.SUB_ADMIN ? 'bg-orange-100 text-orange-700' : u.role === UserRole.SELLER ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
-                                                    {u.role}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 font-bold text-slate-900 text-sm">{u.balance.toFixed(2)} TND</td>
-                                            <td className="px-6 py-4">
-                                                <button onClick={() => startEditingUser(u)} className="text-slate-400 hover:text-indigo-600"><Edit size={16} /></button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        {[UserRole.ADMIN, UserRole.SUB_ADMIN, UserRole.SELLER, UserRole.CLIENT].map(role => (
-                            <div key={role} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                                <div className="flex items-center justify-between mb-4">
-                                    <div className={`p-3 rounded-xl ${role === UserRole.ADMIN ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-600'}`}>
-                                        <Shield size={24} />
-                                    </div>
-                                    <span className="text-2xl font-black text-slate-900">
-                                        {allUsers.filter(u => u.role === role).length}
-                                    </span>
-                                </div>
-                                <h3 className="font-bold text-slate-900 uppercase text-xs tracking-widest">{role}</h3>
-                                <p className="text-xs text-slate-400 mt-1">
-                                    {role === UserRole.ADMIN ? 'Accès total au système' : 
-                                     role === UserRole.SUB_ADMIN ? 'Gestion limitée' :
-                                     role === UserRole.SELLER ? 'Gestion des produits' : 'Utilisateur final'}
-                                </p>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-        )}
-        {editingUser && (
-            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-                    <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                        <h3 className="font-bold text-slate-900">Modifier l'utilisateur</h3>
-                        <button onClick={() => setEditingUser(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-                    </div>
-                    <div className="p-6 space-y-4">
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nom d'utilisateur</label>
-                            <div className="px-4 py-2 bg-slate-50 rounded-lg border border-slate-100 text-slate-600 font-medium">{editingUser.username}</div>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Rôle</label>
-                            <select 
-                                value={editUserRole}
-                                onChange={(e) => setEditUserRole(e.target.value as UserRole)}
-                                className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                            >
-                                {Object.values(UserRole).filter(r => r !== UserRole.GUEST).map(role => (
-                                    <option key={role} value={role}>{role}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Solde (TND)</label>
-                            <input 
-                                type="number" 
-                                value={editUserBalance}
-                                onChange={(e) => setEditUserBalance(e.target.value)}
-                                className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                            />
-                        </div>
-                        <button 
-                            onClick={handleUpdateUser}
-                            disabled={isSavingUser}
-                            className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition flex items-center justify-center space-x-2 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {isSavingUser ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                            <span>{isSavingUser ? 'Enregistrement...' : 'Enregistrer les modifications'}</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
+        {activeTab === 'users' && (
+          <AdminUsersSection
+            currentUserRole={user.role}
+            onNotify={showAdminToast}
+          />
         )}
         {activeTab === 'orders' && (
-          (() => {
-            const isDeliveredStatus = (status: OrderStatus) => [OrderStatus.DELIVERED, OrderStatus.COMPLETED].includes(status);
-            const isActiveStatus = (status: OrderStatus) => ![OrderStatus.DELIVERED, OrderStatus.COMPLETED, OrderStatus.CANCELLED].includes(status);
-            const normalizedSearch = orderSearch.trim().toLowerCase();
-            const filteredOrders = orders
-              .filter((order) => orderFilter === 'all' ? true : order.status === orderFilter)
-              .filter((order) => {
-                if (!normalizedSearch) return true;
-                return [
-                  order.orderNumber,
-                  order.invoice?.invoiceNumber,
-                  order.buyerDisplayName,
-                  order.customerFirstName,
-                  order.customerLastName,
-                  order.customerEmail,
-                  order.customerPhone,
-                  order.paymentMethod,
-                  ...order.items.map((item) => item.titleSnapshot)
-                ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch);
-              })
-              .sort((a, b) => {
-                if (orderSort === 'oldest') return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-                if (orderSort === 'amount-desc') return b.amount - a.amount;
-                if (orderSort === 'amount-asc') return a.amount - b.amount;
-                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-              });
-            const activeOrders = orders.filter((order) => isActiveStatus(order.status));
-            const deliveredOrders = orders.filter((order) => isDeliveredStatus(order.status));
-            const cancelledOrders = orders.filter((order) => order.status === OrderStatus.CANCELLED);
-            const revenue = orders.filter((order) => order.status !== OrderStatus.CANCELLED).reduce((sum, order) => sum + order.amount, 0);
-            const pendingEmail = orders.filter((order) => order.emailStatus === 'FAILED' || order.emailStatus === 'PENDING').length;
-            const paymentLabels: Record<string, string> = { whatsapp: 'WhatsApp', edinar: 'EDINAR', flouci: 'Flouci', click2pay: 'Click2Pay', carte: 'Carte' };
-
-            return (
-             <div className="space-y-6">
-                 <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 text-white shadow-xl">
-                   <div className="grid gap-6 p-6 lg:grid-cols-[1fr_360px]">
-                     <div>
-                       <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-slate-200">
-                         <LucideIcons.Briefcase size={14} />
-                         Command center
-                       </div>
-                       <h2 className="mt-4 text-3xl font-black">Dashboard commandes</h2>
-                       <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-                         Vue CRM pour traiter les commandes, suivre les clients, contrôler les factures et prioriser les actions support.
-                       </p>
-                     </div>
-                     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                       <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">File de travail</div>
-                       <div className="mt-3 grid grid-cols-2 gap-3">
-                         <div>
-                           <div className="text-3xl font-black">{activeOrders.length}</div>
-                           <div className="text-xs text-slate-400">à traiter</div>
-                         </div>
-                         <div>
-                           <div className="text-3xl font-black">{pendingEmail}</div>
-                           <div className="text-xs text-slate-400">emails à vérifier</div>
-                         </div>
-                       </div>
-                     </div>
-                   </div>
-                 </div>
-
-                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-                    {[
-                      ['Total commandes', orders.length, 'Toutes les commandes'],
-                      ['En cours', activeOrders.length, 'À traiter maintenant'],
-                      ['Livrées', deliveredOrders.length, 'Terminées'],
-                      ['Annulées', cancelledOrders.length, 'Stoppées'],
-                      ['CA commandes', `${revenue.toFixed(2)} TND`, 'Hors annulation']
-                    ].map(([label, value, hint]) => (
-                      <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                        <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{label}</div>
-                        <div className="mt-2 text-2xl font-black text-slate-900">{value}</div>
-                        <div className="mt-1 text-xs text-slate-500">{hint}</div>
-                      </div>
-                    ))}
-                 </div>
-
-                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                   <div className="grid gap-4 xl:grid-cols-[1fr_auto_auto] xl:items-center">
-                     <div className="relative">
-                       <LucideIcons.Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
-                       <input
-                         value={orderSearch}
-                         onChange={(e) => setOrderSearch(e.target.value)}
-                         placeholder="Rechercher commande, client, téléphone, email, facture, produit..."
-                         className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm font-medium outline-none focus:border-indigo-500"
-                       />
-                     </div>
-                     <select value={orderSort} onChange={(e) => setOrderSort(e.target.value as typeof orderSort)} className="h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 outline-none focus:border-indigo-500">
-                       <option value="newest">Plus récentes</option>
-                       <option value="oldest">Plus anciennes</option>
-                       <option value="amount-desc">Montant décroissant</option>
-                       <option value="amount-asc">Montant croissant</option>
-                     </select>
-                     <div className="flex flex-wrap gap-2">
-                       {[
-                         ['all', 'Toutes'],
-                         [OrderStatus.PAYMENT_UNDER_REVIEW, 'Paiement en revue'],
-                         [OrderStatus.PAYMENT_APPROVED, 'Paiement OK'],
-                         [OrderStatus.IN_DELIVERY, 'En livraison'],
-                         [OrderStatus.DELIVERED, 'Livrées'],
-                         [OrderStatus.CANCELLED, 'Annulées']
-                       ].map(([status, label]) => (
-                         <button key={status} onClick={() => setOrderFilter(status as 'all' | OrderStatus)} className={`h-10 rounded-xl px-4 text-xs font-black transition ${orderFilter === status ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                           {label}
-                         </button>
-                       ))}
-                     </div>
-                   </div>
-                 </div>
-
-                 <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
-                   <div className="space-y-4">
-                    {filteredOrders.map((o) => {
-                        const currentStepIndex = getOrderStepIndex(o.status);
-                        const isExpanded = expandedOrderId === o.id;
-                        const customerName = o.buyerDisplayName || [o.customerFirstName, o.customerLastName].filter(Boolean).join(' ') || o.buyer?.username || 'Client';
-                        const payment = o.payments?.[0];
-                        const deliveryDraft = deliveryDrafts[o.id] || { orderItemId: o.items[0]?.id || '', deliveryType: o.items[0]?.deliveryType || 'MIXED', deliveryContent: '', activationGuide: '', restrictions: '', region: '' };
-                        const updateDeliveryDraft = (patch: Partial<typeof deliveryDraft>) => setDeliveryDrafts((current) => ({ ...current, [o.id]: { ...deliveryDraft, ...patch } }));
-                        return (
-                          <div key={o.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md">
-                            <div className="grid gap-4 p-5 lg:grid-cols-[1fr_180px_190px] lg:items-center">
-                              <div className="min-w-0">
-                                <div className="mb-3 flex flex-wrap items-center gap-2">
-                                  <span className="rounded-full bg-indigo-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-indigo-700">{o.orderNumber}</span>
-                                  <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${getOrderStatusClasses(o.status)}`}>{ORDER_STATUS_LABELS[o.status]}</span>
-                                  <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${o.emailStatus === 'SENT' ? 'bg-emerald-50 text-emerald-700' : o.emailStatus === 'FAILED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
-                                    Email {o.emailStatus || 'PENDING'}
-                                  </span>
-                                  {payment && (
-                                    <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${payment.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : payment.status === 'REJECTED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
-                                      Paiement {payment.status}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex flex-col gap-3 md:flex-row md:items-start">
-                                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 font-black text-slate-700">
-                                    {customerName.charAt(0).toUpperCase()}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className="font-black text-slate-900">{customerName}</div>
-                                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
-                                      <span className="break-all">{o.customerEmail || o.buyer?.email || 'Email indisponible'}</span>
-                                      <span>{o.customerPhone || 'Téléphone indisponible'}</span>
-                                    </div>
-                                    <div className="mt-2 text-sm text-slate-600 line-clamp-1">
-                                      {o.items.map((item) => item.titleSnapshot).join(', ')}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="rounded-2xl bg-slate-50 p-4">
-                                <div className="text-xs font-black uppercase tracking-widest text-slate-400">Paiement</div>
-                                <div className="mt-2 font-black text-slate-900">{paymentLabels[(o.paymentMethod || '').toLowerCase()] || o.paymentMethod || 'À confirmer'}</div>
-                                <div className="mt-1 text-xs text-slate-500">{o.invoice?.invoiceNumber ? `Facture ${o.invoice.invoiceNumber}` : 'Facture non liée'}</div>
-                                {payment?.customerReference && <div className="mt-1 break-all text-xs text-slate-500">Ref: {payment.customerReference}</div>}
-                                {payment?.proofFileUrl && <div className="mt-1 break-all text-xs font-semibold text-indigo-600">Preuve: {payment.proofFileUrl}</div>}
-                              </div>
-                              <div className="space-y-3">
-                                <div className="text-right">
-                                  <div className="text-2xl font-black text-slate-900">{o.amount.toFixed(2)} TND</div>
-                                  <div className="text-xs text-slate-400">{new Date(o.createdAt).toLocaleString('fr-FR')}</div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <button type="button" onClick={() => setExpandedOrderId(isExpanded ? null : o.id)} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
-                                    {isExpanded ? 'Fermer' : 'Détails'}
-                                  </button>
-                                  {o.status === OrderStatus.PAYMENT_UNDER_REVIEW ? (
-                                    <button type="button" onClick={() => onAdminOrderAction('approvePayment', o.id)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">
-                                      Approuver
-                                    </button>
-                                  ) : o.status !== OrderStatus.DELIVERED ? (
-                                    <button type="button" onClick={() => onAdminOrderAction('sendDelivery', o.id)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">
-                                      Envoyer
-                                    </button>
-                                  ) : (
-                                    <button type="button" onClick={() => onUpdateStatus(o.id, OrderStatus.IN_PROGRESS)} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white hover:bg-black">
-                                      Rouvrir
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            {isExpanded && (
-                              <div className="border-t border-slate-100 bg-slate-50/60 p-5">
-                                <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
-                                  <div className="space-y-4">
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                                      <div className="mb-4 text-xs font-black uppercase tracking-widest text-slate-400">Timeline de suivi</div>
-                                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                        {ORDER_STATUS_STEPS.map((step, index) => {
-                                          const isDone = currentStepIndex >= index;
-                                          const isCurrent = o.status === step.status || (index === 0 && [OrderStatus.REGISTERED, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.IN_PROGRESS].includes(o.status));
-                                          return (
-                                            <div key={step.status} className={`rounded-2xl border p-4 ${o.status === OrderStatus.CANCELLED ? 'border-red-200 bg-red-50' : isCurrent ? 'border-indigo-200 bg-indigo-50' : isDone ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
-                                              <div className="font-black text-slate-900">{step.label}</div>
-                                              <div className="mt-1 text-xs leading-5 text-slate-500">{step.description}</div>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                                      <div className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Produits achetés</div>
-                                      <div className="divide-y divide-slate-100">
-                                        {o.items.map((item) => (
-                                          <div key={item.id} className="flex items-center justify-between gap-4 py-3 text-sm">
-                                            <div>
-                                              <div className="font-bold text-slate-900">{item.titleSnapshot}</div>
-                                              {item.variantSnapshot && <div className="text-xs text-slate-500">{item.variantSnapshot}</div>}
-                                            </div>
-                                            <div className="text-right">
-                                              <div className="font-black text-slate-900">{(item.priceSnapshot * item.quantity).toFixed(2)} TND</div>
-                                              <div className="text-xs text-slate-500">Qté {item.quantity}</div>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                                      <div className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Delivery editor</div>
-                                      <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
-                                        This content will become visible to the customer and will be sent by email.
-                                      </div>
-                                      <div className="grid gap-3 md:grid-cols-2">
-                                        <select value={deliveryDraft.orderItemId} onChange={(e) => updateDeliveryDraft({ orderItemId: e.target.value })} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                                          {o.items.map((item) => <option key={item.id} value={item.id}>{item.titleSnapshot}</option>)}
-                                        </select>
-                                        <select value={deliveryDraft.deliveryType} onChange={(e) => updateDeliveryDraft({ deliveryType: e.target.value })} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                                          {['KEY', 'ACCOUNT', 'FILE', 'LINK', 'MIXED'].map((type) => <option key={type} value={type}>{type}</option>)}
-                                        </select>
-                                      </div>
-                                      <textarea value={deliveryDraft.deliveryContent} onChange={(e) => updateDeliveryDraft({ deliveryContent: e.target.value })} placeholder="Key, login/password, file link, notes..." className="mt-3 min-h-[110px] w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-sm" />
-                                      <div className="mt-3 grid gap-3 md:grid-cols-3">
-                                        <input value={deliveryDraft.activationGuide} onChange={(e) => updateDeliveryDraft({ activationGuide: e.target.value })} placeholder="Activation guide" className="rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-                                        <input value={deliveryDraft.restrictions} onChange={(e) => updateDeliveryDraft({ restrictions: e.target.value })} placeholder="Restrictions" className="rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-                                        <input value={deliveryDraft.region} onChange={(e) => updateDeliveryDraft({ region: e.target.value })} placeholder="Region" className="rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-                                      </div>
-                                      <div className="mt-3 flex flex-wrap gap-2">
-                                        <button type="button" onClick={() => onAdminOrderAction('createDelivery', o.id, deliveryDraft)} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white hover:bg-black">
-                                          Préparer livraison chiffrée
-                                        </button>
-                                        <button type="button" onClick={() => onAdminOrderAction('sendDelivery', o.id)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white hover:bg-emerald-700">
-                                          Envoyer livraison
-                                        </button>
-                                        <button type="button" onClick={() => onAdminOrderAction('resendDelivery', o.id)} className="rounded-xl bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-700 hover:bg-indigo-100">
-                                          Renvoyer livraison
-                                        </button>
-                                      </div>
-                                      <div className="mt-4 space-y-2">
-                                        {(o.deliveries || []).map((delivery) => (
-                                          <div key={delivery.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600">
-                                            <span className="font-black text-slate-900">{delivery.deliveryType}</span> · {delivery.status} · resend {delivery.resendCount || 0}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                                      <div className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Action logs</div>
-                                      <div className="space-y-2">
-                                        {(o.actionLogs || []).map((log) => (
-                                          <div key={log.id} className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
-                                            <div className="font-black text-slate-900">{log.action}</div>
-                                            <div>{log.actorType} {log.actorId || ''} · {new Date(log.createdAt).toLocaleString('fr-FR')}</div>
-                                          </div>
-                                        ))}
-                                        {(!o.actionLogs || o.actionLogs.length === 0) && <div className="text-sm italic text-slate-400">Aucun log.</div>}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <aside className="space-y-3">
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                                      <div className="text-xs font-black uppercase tracking-widest text-slate-400">Actions administratives</div>
-                                      <select className={`mt-3 w-full rounded-xl px-4 py-3 text-xs font-bold uppercase border-none focus:ring-0 cursor-pointer ${getOrderStatusClasses(o.status)}`} value={o.status} onChange={(e) => requestOrderStatusChange(o.id, o.status, e.target.value as OrderStatus)}>
-                                        {[OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.PAYMENT_APPROVED, OrderStatus.PAYMENT_REJECTED, OrderStatus.IN_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED].map(s => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
-                                      </select>
-                                      <button type="button" onClick={() => onAdminOrderAction('approvePayment', o.id)} className="mt-3 flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white hover:bg-emerald-700">
-                                        Approuver paiement
-                                      </button>
-                                      <button type="button" onClick={() => {
-                                        setAdminConfirmation({
-                                          title: 'Rejeter ce paiement ?',
-                                          message: 'Le paiement sera marqué comme rejeté et le client recevra la mise à jour de statut.',
-                                          confirmLabel: 'Rejeter le paiement',
-                                          onConfirm: () => onAdminOrderAction('rejectPayment', o.id, { reason: 'Paiement rejeté par un administrateur.' })
-                                        });
-                                      }} className="mt-3 flex w-full items-center justify-center rounded-xl bg-red-50 px-4 py-3 text-xs font-black text-red-700 hover:bg-red-100">
-                                        Rejeter paiement
-                                      </button>
-                                      <a href={`mailto:${o.customerEmail || o.buyer?.email || ''}`} className="mt-3 flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-xs font-black text-slate-700 hover:bg-slate-50">
-                                        Email client
-                                      </a>
-                                      <button type="button" onClick={() => onResendOrderInvoiceEmail(o.id)} className="mt-3 flex w-full items-center justify-center rounded-xl bg-indigo-50 px-4 py-3 text-xs font-black text-indigo-700 hover:bg-indigo-100">
-                                        Renvoyer facture
-                                      </button>
-                                      {o.customerPhone && (
-                                        <a href={`https://wa.me/${o.customerPhone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="mt-3 flex w-full items-center justify-center rounded-xl bg-emerald-50 px-4 py-3 text-xs font-black text-emerald-700 hover:bg-emerald-100">
-                                          WhatsApp client
-                                        </a>
-                                      )}
-                                    </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-                                      <div className="text-xs font-black uppercase tracking-widest text-slate-400">Audit</div>
-                                      <div className="mt-3">Créée: {new Date(o.createdAt).toLocaleString('fr-FR')}</div>
-                                      <div className="mt-1">Mise à jour: {new Date(o.updatedAt).toLocaleString('fr-FR')}</div>
-                                      {o.emailError && <div className="mt-3 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">{o.emailError}</div>}
-                                    </div>
-                                  </aside>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                    })}
-                    {filteredOrders.length === 0 && (
-                      <AdminEmptyState
-                        title="Aucune commande trouvée"
-                        description="Ajuste les filtres, la recherche ou la période pour retrouver une commande à traiter."
-                      />
-                    )}
-                   </div>
-                   <aside className="space-y-4">
-                     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                       <div className="text-xs font-black uppercase tracking-widest text-slate-400">Priorités</div>
-                       <div className="mt-4 space-y-3">
-                         {activeOrders.slice(0, 5).map((order) => (
-                           <button key={order.id} type="button" onClick={() => setExpandedOrderId(order.id)} className="w-full rounded-xl border border-slate-100 bg-slate-50 p-3 text-left hover:border-indigo-200 hover:bg-indigo-50">
-                             <div className="text-xs font-black text-indigo-700">{order.orderNumber}</div>
-                             <div className="mt-1 truncate text-sm font-bold text-slate-900">{order.buyerDisplayName || order.customerEmail || 'Client'}</div>
-                             <div className="text-xs text-slate-500">{order.amount.toFixed(2)} TND</div>
-                           </button>
-                         ))}
-                         {activeOrders.length === 0 && <div className="text-sm text-slate-400">Aucune commande active.</div>}
-                       </div>
-                     </div>
-                     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                       <div className="text-xs font-black uppercase tracking-widest text-slate-400">Santé opérationnelle</div>
-                       <div className="mt-4 space-y-3 text-sm">
-                         <div className="flex justify-between"><span className="text-slate-500">Taux livraison</span><span className="font-black text-slate-900">{orders.length ? Math.round((deliveredOrders.length / orders.length) * 100) : 0}%</span></div>
-                         <div className="flex justify-between"><span className="text-slate-500">Panier moyen</span><span className="font-black text-slate-900">{orders.length ? (revenue / orders.length).toFixed(2) : '0.00'} TND</span></div>
-                         <div className="flex justify-between"><span className="text-slate-500">Emails échoués</span><span className="font-black text-slate-900">{orders.filter(order => order.emailStatus === 'FAILED').length}</span></div>
-                       </div>
-                     </div>
-                   </aside>
-                 </div>
-             </div>
-            );
-          })()
+          <AdminOrdersSection
+            orders={orders}
+            orderFilter={orderFilter}
+            orderSearch={orderSearch}
+            orderSort={orderSort}
+            expandedOrderId={expandedOrderId}
+            deliveryDrafts={deliveryDrafts}
+            setExpandedOrderId={setExpandedOrderId}
+            setOrderFilter={setOrderFilter}
+            setOrderSearch={setOrderSearch}
+            setOrderSort={setOrderSort}
+            setDeliveryDrafts={setDeliveryDrafts}
+            onUpdateStatus={onUpdateStatus}
+            onAdminOrderAction={onAdminOrderAction}
+            onResendOrderInvoiceEmail={onResendOrderInvoiceEmail}
+            requestOrderStatusChange={requestOrderStatusChange}
+            onRequestRejectPayment={(orderId) => setAdminConfirmation({
+              title: 'Rejeter le paiement ?',
+              message: 'Cette commande passera en statut annulé et le client devra recommencer son paiement.',
+              confirmLabel: 'Rejeter le paiement',
+              onConfirm: () => onAdminOrderAction('rejectPayment', orderId, { reason: 'Paiement rejeté par un administrateur.' })
+            })}
+            getOrderStepIndex={getOrderStepIndex}
+            getOrderStatusClasses={getOrderStatusClasses}
+            ORDER_STATUS_LABELS={ORDER_STATUS_LABELS}
+            ORDER_STATUS_STEPS={ORDER_STATUS_STEPS}
+          />
         )}
         {activeTab === 'listings' && (
-             <div className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm">
-                 <div className="px-6 py-4 border-b border-slate-100 font-bold bg-slate-50 flex justify-between items-center">
-                     <span>Inventaire Produits</span>
-                     <button onClick={() => setActiveTab('create')} className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-indigo-700 transition">Nouveau</button>
-                 </div>
-                 {listings.length === 0 ? (
-                   <div className="p-6">
-                     <AdminEmptyState
-                       title="Aucun produit dans le catalogue"
-                       description="Commence par créer un produit ou un pack pour alimenter la marketplace."
-                       action={
-                         <button onClick={() => setActiveTab('create')} className="rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">
-                           Ajouter un produit
-                         </button>
-                       }
-                     />
-                   </div>
-                 ) : (
-                 <div className="overflow-x-auto">
-                     <table className="w-full text-left">
-                         <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-bold">
-                             <tr>
-                                 <th className="px-6 py-3">Produit</th>
-                                 <th className="px-6 py-3">Catégorie</th>
-                                 {user.role === UserRole.ADMIN && <th className="px-6 py-3">Source</th>}
-                                 <th className="px-6 py-3">Prix</th>
-                                 <th className="px-6 py-3">Stock</th>
-                                 <th className="px-6 py-3">Type</th>
-                                 <th className="px-6 py-3">Actions</th>
-                             </tr>
-                         </thead>
-                         <tbody className="divide-y divide-slate-100">
-                             {listings.map(l => (
-                                 <tr key={l.id} className="hover:bg-slate-50 transition-colors">
-                                     <td className="px-6 py-4 flex items-center space-x-3">
-                                         <div className="h-10 w-10 overflow-hidden rounded border border-slate-100">
-                                           <ListingImage listing={l} alt="" />
-                                         </div>
-                                         <div>
-                                             <div className="flex items-center gap-2">
-                                               <div className="font-bold text-slate-900 text-sm">{l.title}</div>
-                                               {l.isPackage && (
-                                                 <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase text-indigo-700">Pack</span>
-                                               )}
-                                             </div>
-                                             <div className="text-[10px] text-slate-400 uppercase font-bold">{l.game}</div>
-                                         </div>
-                                     </td>
-                                     <td className="px-6 py-4 text-xs text-slate-600">
-                                         {categories.find(c => c.id === l.categoryId)?.name || 'Inconnu'}
-                                     </td>
-                                     {user.role === UserRole.ADMIN && (
-                                       <td className="px-6 py-4 text-xs text-slate-600">
-                                         {l.source ? (
-                                           <a href={l.source} target="_blank" rel="noreferrer" className="font-semibold text-indigo-600 hover:underline">
-                                             Ouvrir
-                                           </a>
-                                         ) : (
-                                           <span className="text-slate-400">Aucune</span>
-                                         )}
-                                       </td>
-                                     )}
-                                     <td className="px-6 py-4 font-bold text-slate-900 text-sm">
-                                         {hasListingDiscount(l) && <div className="text-[10px] font-medium text-slate-400 line-through">{l.price.toFixed(2)} TND</div>}
-                                         <div>{getListingFinalPrice(l).toFixed(2)} TND</div>
-                                         {hasListingDiscount(l) && <div className="text-[10px] font-bold text-rose-600">{getListingDiscountLabel(l)}</div>}
-                                     </td>
-                                     <td className="px-6 py-4">
-                                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${getListingStateClasses(l)}`}>
-                                             {l.isArchived ? 'ARCHIVE' : l.stock > 0 ? 'EN STOCK' : 'RUPTURE'}
-                                         </span>
-                                     </td>
-                                     <td className="px-6 py-4">
-                                         <div className="flex flex-wrap gap-2">
-                                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${l.isInstant ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-700'}`}>
-                                               {l.isInstant ? 'INSTANT' : 'MANUEL'}
-                                           </span>
-                                           {l.isPackage && (
-                                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-700">
-                                               PACKAGE
-                                             </span>
-                                           )}
-                                         </div>
-                                     </td>
-                                     <td className="px-6 py-4">
-                                         <div className="flex space-x-2">
-                                             <button 
-                                            onClick={() => startEditingListing(l)}
-                                            className="text-slate-400 hover:text-indigo-600"
-                                          >
-                                            <Edit size={16} />
-                                          </button>
-                                             <button onClick={() => handleDeleteListingClick(l)} className="text-slate-400 hover:text-red-500"><Trash2 size={16} /></button>
-                                         </div>
-                                     </td>
-                                 </tr>
-                             ))}
-                         </tbody>
-                     </table>
-                 </div>
-                 )}
-             </div>
+          <AdminListingsSection
+            listings={listings}
+            categories={categories}
+            userRole={user.role}
+            navigateTo={navigateTo}
+            onCreateNew={() => requestAdminTab('create')}
+            onEditListing={startEditingListing}
+            onDeleteListing={handleDeleteListingClick}
+            getListingStateClasses={getListingStateClasses}
+          />
         )}
       </div>
     {listingPendingDelete && (

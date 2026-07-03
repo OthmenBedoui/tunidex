@@ -1,31 +1,18 @@
 
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useLayoutEffect } from 'react';
 import AdminLayout from './components/admin/AdminLayout';
-import Layout from './components/store-client/Layout';
-import Home from './pages/Home';
-import Login from './pages/Login';
-import Subscription from './pages/Subscription';
-import Cart from './pages/Cart';
-import CategoryPage from './pages/CategoryPage';
-import ProductPage from './pages/ProductPage';
-import OrderTracking from './pages/OrderTracking';
-import About from './pages/About';
-import Contact from './pages/Contact';
-import PrivacyPolicy from './pages/PrivacyPolicy';
-import Terms from './pages/Terms';
-import DataDeletion from './pages/DataDeletion';
+import StoreLayout from './components/store-client/shell/StoreLayout';
+import StoreBootLoader from './components/store-client/StoreBootLoader';
+import { About, AuthCallback, Cart, CategoryPage, Contact, DataDeletion, Home, Login, OrderTracking, PrivacyPolicy, ProductPage, Profile, Subscription, Terms } from './pages/store';
 import RegisterAuthenticationAdmin from './pages/RegisterAuthenticationAdmin';
-import AuthCallback from './pages/AuthCallback';
-import { AdminDashboard, UserDashboard } from './pages/Dashboards';
+import { UserDashboard } from './pages/Dashboards';
 import { User, UserRole, Listing, Order, OrderStatus, SubscriptionTier, Category, SiteConfig, ClientNotification } from './types';
 import { api } from './services/api';
 import * as LucideIcons from 'lucide-react';
 import { addGuestCartItem, getGuestCartCount } from './utils/guestCart';
+import { ADMIN_TAB_SLUGS, AdminConsolePage, AdminNotFoundPage, AdminTab, canAccessAdminTab, getAdminTabFromSlug, isStaffAdminRole } from './pages/admin';
 
 const INITIAL_GUEST: User = { id: 'guest', username: 'Invité', email: '', role: UserRole.GUEST, balance: 0, avatarUrl: 'https://via.placeholder.com/150', subscriptionTier: SubscriptionTier.FREE };
-
-// --- APP COMPONENT ---
-import Profile from './pages/Profile';
 
 type NotificationState = {
   show: boolean;
@@ -38,20 +25,11 @@ type PendingNavigation = {
   slug?: string;
 } | null;
 
-type AdminTab =
-  | 'overview'
-  | 'orders'
-  | 'listings'
-  | 'create'
-  | 'users'
-  | 'categories'
-  | 'settings'
-  | 'customization'
-  | 'store-config'
-  | 'email-config'
-  | 'notification-config'
-  | 'seo'
-  | 'data';
+const findListingFromLegacySearch = (listings: Listing[], search: string) => {
+  const productId = new URLSearchParams(search).get('item');
+  if (!productId) return null;
+  return listings.find((listing) => listing.id === productId) || null;
+};
 
 export type AdminNotificationItem = {
   id: string;
@@ -67,8 +45,12 @@ export type AdminNotificationItem = {
   read: boolean;
 };
 
-const isAdminRole = (role: UserRole) =>
-  role === UserRole.ADMIN || role === UserRole.SUB_ADMIN || role === UserRole.SELLER;
+const isAdminRole = (role: UserRole) => isStaffAdminRole(role);
+
+const getNormalizedAdminSlug = (slug?: string) => {
+  const tab = getAdminTabFromSlug(slug);
+  return tab ? (slug || '') : '';
+};
 
 const resolveRouteFromPath = (pathname: string): { page: string; slug?: string } => {
   const normalizedPath = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
@@ -77,13 +59,20 @@ const resolveRouteFromPath = (pathname: string): { page: string; slug?: string }
     return { page: 'home' };
   }
   if (normalizedPath === '/admin') {
-    return { page: 'admin-dashboard' };
+    return { page: 'admin-dashboard', slug: '' };
   }
   if (normalizedPath === '/admin/login') {
     return { page: 'admin-login' };
   }
   if (normalizedPath === '/admin/register-authentication') {
     return { page: 'admin-register-authentication' };
+  }
+  if (normalizedPath.startsWith('/admin/')) {
+    const adminSlug = decodeURIComponent(normalizedPath.replace('/admin/', ''));
+    if (getAdminTabFromSlug(adminSlug)) {
+      return { page: 'admin-dashboard', slug: adminSlug };
+    }
+    return { page: 'admin-not-found' };
   }
   if (normalizedPath === '/login') {
     return { page: 'login' };
@@ -127,6 +116,9 @@ const resolveRouteFromPath = (pathname: string): { page: string; slug?: string }
   if (normalizedPath.startsWith('/category/')) {
     return { page: 'category', slug: decodeURIComponent(normalizedPath.replace('/category/', '')) };
   }
+  if (normalizedPath.startsWith('/product/')) {
+    return { page: 'product', slug: decodeURIComponent(normalizedPath.replace('/product/', '')) };
+  }
   if (normalizedPath === '/product') {
     return { page: 'product' };
   }
@@ -139,7 +131,7 @@ const resolveRouteFromPath = (pathname: string): { page: string; slug?: string }
 const getPathForPage = (page: string, slug?: string) => {
   switch (page) {
     case 'admin-dashboard':
-      return '/admin';
+      return slug ? `/admin/${slug.split('/').map((part) => encodeURIComponent(part)).join('/')}` : '/admin';
     case 'admin-login':
       return '/admin/login';
     case 'admin-register-authentication':
@@ -173,7 +165,7 @@ const getPathForPage = (page: string, slug?: string) => {
     case 'category':
       return slug ? `/category/${encodeURIComponent(slug)}` : '/';
     case 'product':
-      return '/product';
+      return slug ? `/product/${encodeURIComponent(slug)}` : '/product';
     case 'admin-not-found':
     case 'not-found':
       return window.location.pathname;
@@ -227,6 +219,16 @@ const getFontFormat = (format: string) => {
   return format || 'woff2';
 };
 
+const RouteLoadingScreen: React.FC<{ title: string; message: string }> = ({ title, message }) => (
+  <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
+    <div className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-indigo-700">
+      Chargement
+    </div>
+    <h1 className="mt-4 text-3xl font-black text-slate-950">{title}</h1>
+    <p className="mt-3 text-sm leading-7 text-slate-600">{message}</p>
+  </div>
+);
+
 const STAFF_ROLES = new Set(['ADMIN', 'SUB_ADMIN', 'SELLER', 'AGENT']);
 
 const isStaffAccount = (role?: string) => STAFF_ROLES.has(role || '');
@@ -235,6 +237,7 @@ const formatUserLabel = (target: Pick<User, 'username' | 'email' | 'fullName'>) 
   target.fullName?.trim() || target.username || target.email;
 
 const App: React.FC = () => {
+  const hasStoredToken = Boolean(localStorage.getItem('token'));
   const initialRoute = resolveRouteFromPath(window.location.pathname);
   const [user, setUser] = useState<User>(INITIAL_GUEST);
   const [listings, setListings] = useState<Listing[]>([]);
@@ -265,16 +268,27 @@ const App: React.FC = () => {
   const [blockingOrderNotification, setBlockingOrderNotification] = useState<AdminNotificationItem | null>(null);
   const [clientNotifications, setClientNotifications] = useState<ClientNotification[]>([]);
   const [adminFocusOrderId, setAdminFocusOrderId] = useState<string | null>(null);
-  const [adminFocusTab, setAdminFocusTab] = useState<AdminTab | null>(null);
-  const [adminActiveTab, setAdminActiveTab] = useState<AdminTab>('overview');
   const [siteConfig, setSiteConfig] = useState<SiteConfig>({ logoUrl: '', siteName: 'TuniBots', logoSize: 32, heroPromoBanners: [], floatingBrandCards: [], storeSections: [] });
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(!localStorage.getItem('token'));
+  const [isCatalogResolved, setIsCatalogResolved] = useState(false);
   const publicListings = useMemo(() => listings.filter((listing) => !listing.isArchived), [listings]);
+  const currentAdminTab = useMemo(
+    () => getAdminTabFromSlug(currentSlug) || 'overview',
+    [currentSlug]
+  );
   const pendingOrdersCount = useMemo(
     () => orders.filter((order) => order.status === OrderStatus.PAYMENT_UNDER_REVIEW).length,
     [orders]
   );
+  const isAdminSurface =
+    currentPage === 'admin-dashboard' ||
+    currentPage === 'admin-login' ||
+    currentPage === 'admin-register-authentication' ||
+    currentPage === 'admin-not-found';
+  const shouldShowStoreLoader =
+    !isAdminSurface &&
+    (!isCatalogResolved || (hasStoredToken && !isAuthResolved));
 
   useEffect(() => {
     const handlePopState = () => {
@@ -340,6 +354,8 @@ const App: React.FC = () => {
       } else {
         console.warn('Unable to load site config during app bootstrap.', siteConfigResult.reason);
       }
+
+      setIsCatalogResolved(true);
     };
 
     void bootstrap();
@@ -459,11 +475,6 @@ const App: React.FC = () => {
   }, [siteConfig]);
 
   useEffect(() => {
-    const isAdminSurface =
-      currentPage === 'admin-dashboard' ||
-      currentPage === 'admin-login' ||
-      currentPage === 'admin-register-authentication' ||
-      currentPage === 'admin-not-found';
     if (isAdminSurface) return;
     const pageType = selectedProduct && currentPage === 'product'
       ? 'product'
@@ -493,6 +504,36 @@ const App: React.FC = () => {
       }
     }
   }, [listings, selectedProduct, selectedVariantId]);
+
+  useEffect(() => {
+    if (currentPage !== 'product') return;
+
+    if (currentSlug) {
+      const matchedListing = listings.find((listing) => listing.slug === currentSlug && !listing.isArchived) || null;
+      setSelectedProduct(matchedListing);
+      setSelectedVariantId((currentVariantId) => {
+        if (!matchedListing?.variants?.length) return '';
+        if (matchedListing.variants.some((variant) => variant.id === currentVariantId)) return currentVariantId;
+        return matchedListing.variants[0].id || '';
+      });
+      return;
+    }
+
+    const legacyListing = findListingFromLegacySearch(listings, window.location.search);
+    if (legacyListing && !legacyListing.isArchived) {
+      setSelectedProduct(legacyListing);
+      setSelectedVariantId(legacyListing.variants?.[0]?.id || '');
+      setCurrentSlug(legacyListing.slug);
+      window.history.replaceState({}, '', getPathForPage('product', legacyListing.slug));
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    if (window.location.pathname === '/product') {
+      setSelectedProduct(null);
+      setSelectedVariantId('');
+    }
+  }, [currentPage, currentSlug, listings]);
 
   const refreshData = () => {
       api.getListings().then(setListings).catch(console.error);
@@ -570,11 +611,7 @@ const App: React.FC = () => {
 
   const openAdminTab = (tab: AdminTab) => {
     setAdminFocusOrderId(null);
-    setAdminActiveTab((current) => (current === tab ? current : tab));
-    setAdminFocusTab(tab);
-    if (currentPage !== 'admin-dashboard') {
-      navigateTo('admin-dashboard');
-    }
+    navigateTo('admin-dashboard', ADMIN_TAB_SLUGS[tab]);
   };
 
   const openAdminNotificationOrder = (item: AdminNotificationItem) => {
@@ -866,9 +903,10 @@ const App: React.FC = () => {
       console.warn(`Unknown navigation target "${page}". Redirecting to ${nextPage}.`);
     }
 
+    const normalizedSlug = nextPage === 'admin-dashboard' ? getNormalizedAdminSlug(slug) : slug || '';
     setCurrentPage(nextPage);
-    setCurrentSlug(slug || '');
-    const nextPath = getPathForPage(nextPage, slug);
+    setCurrentSlug(normalizedSlug);
+    const nextPath = getPathForPage(nextPage, normalizedSlug);
     if (window.location.pathname !== nextPath) {
       if (replace) {
         window.history.replaceState({}, '', nextPath);
@@ -898,6 +936,18 @@ const App: React.FC = () => {
     setIsAuthResolved(true);
     setUser(user);
     if (isAdminRole(user.role)) {
+      if (redirectPath) {
+        setPendingNavigation(null);
+        const route = resolveRouteFromPath(new URL(redirectPath, window.location.origin).pathname);
+        navigateTo(route.page, route.slug);
+        return;
+      }
+      if (pendingNavigation && pendingNavigation.page.startsWith('admin')) {
+        const nextRoute = pendingNavigation;
+        setPendingNavigation(null);
+        navigateTo(nextRoute.page, nextRoute.slug);
+        return;
+      }
       setPendingNavigation(null);
       navigateTo('admin-dashboard');
       return;
@@ -944,7 +994,7 @@ const App: React.FC = () => {
     navigateTo('login');
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isAuthResolved) {
       return;
     }
@@ -955,6 +1005,16 @@ const App: React.FC = () => {
         currentPage === 'admin-not-found') &&
       !isAdminRole(user.role)
     ) {
+      const intendedRoute =
+        currentPage === 'admin-dashboard'
+          ? { page: currentPage, slug: currentSlug }
+          : { page: currentPage as 'admin-register-authentication' | 'admin-not-found' };
+      setPendingNavigation((current) => {
+        if (current?.page === intendedRoute.page && current?.slug === intendedRoute.slug) {
+          return current;
+        }
+        return intendedRoute;
+      });
       navigateTo('admin-login', undefined, true);
       return;
     }
@@ -969,7 +1029,11 @@ const App: React.FC = () => {
         navigateTo('home', undefined, true);
       }
     }
-  }, [currentPage, isAuthResolved, user.id, user.role]);
+
+    if (currentPage === 'admin-dashboard' && !canAccessAdminTab(user.role, currentAdminTab)) {
+      navigateTo('admin-dashboard', undefined, true);
+    }
+  }, [currentAdminTab, currentPage, currentSlug, isAuthResolved, user.id, user.role]);
   
   const handleAddToCart = async (listing: Listing) => {
     const variants = listing.variants || [];
@@ -1038,7 +1102,7 @@ const App: React.FC = () => {
   const handleViewProduct = (l: Listing) => {
     setSelectedProduct(l);
     setSelectedVariantId(l.variants?.[0]?.id || '');
-    navigateTo('product');
+    navigateTo('product', l.slug);
   };
 
   const handleOrderCreated = (order: Order) => {
@@ -1150,8 +1214,21 @@ const App: React.FC = () => {
       case 'terms': return <Terms siteConfig={siteConfig} />;
       
       case 'category': {
+        if (!isCatalogResolved) {
+          return <RouteLoadingScreen title="Chargement de la catégorie" message="La page est en cours de synchronisation avec le catalogue." />;
+        }
         const cat = categories.find(c => c.slug === currentSlug);
-        if(!cat) return <div className="p-8 text-center text-indigo-500">Catégorie introuvable</div>;
+        if(!cat) return (
+          <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-amber-700">
+              Catégorie
+            </div>
+            <h1 className="mt-4 text-3xl font-black text-slate-950">Catégorie introuvable</h1>
+            <p className="mt-3 text-sm leading-7 text-slate-600">
+              L’URL demandée ne correspond à aucune catégorie active du store.
+            </p>
+          </div>
+        );
         
         // Robust icon lookup
         const icons: Record<string, React.ComponentType<{ size?: number; className?: string }>> = LucideIcons as unknown as Record<string, React.ComponentType<{ size?: number; className?: string }>>;
@@ -1173,7 +1250,31 @@ const App: React.FC = () => {
       }
 
       case 'product': {
-        if (!selectedProduct || selectedProduct.isArchived) return <Home listings={publicListings} categories={categories} onViewProduct={handleViewProduct} navigateTo={navigateTo} siteConfig={siteConfig} />;
+        if (!isCatalogResolved) {
+          return <RouteLoadingScreen title="Chargement du produit" message="Le produit est en cours de chargement depuis le catalogue." />;
+        }
+        if (!selectedProduct || selectedProduct.isArchived) {
+          return (
+            <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
+              <div className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-amber-700">
+                Produit
+              </div>
+              <h1 className="mt-4 text-3xl font-black text-slate-950">Produit introuvable</h1>
+              <p className="mt-3 text-sm leading-7 text-slate-600">
+                Cette URL produit n’existe plus, n’est pas publiée, ou le catalogue n’a pas pu la retrouver.
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => navigateTo('home')}
+                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800"
+                >
+                  Retour accueil
+                </button>
+              </div>
+            </div>
+          );
+        }
         return (
           <ProductPage
             product={selectedProduct}
@@ -1190,11 +1291,12 @@ const App: React.FC = () => {
         );
       }
       case 'admin-dashboard':
-        return <AdminDashboard 
+        return <AdminConsolePage
                   user={user} 
                   orders={orders} 
                   listings={listings} 
                   categories={categories} 
+                  routeTab={currentAdminTab}
                   onUpdateStatus={handleUpdateOrderStatus} 
                   onAdminOrderAction={handleAdminOrderAction}
                   onCreateListing={handleCreateListing} 
@@ -1205,11 +1307,13 @@ const App: React.FC = () => {
                   onUpdateSiteConfig={handleUpdateSiteConfig}
                   onResendOrderInvoiceEmail={handleResendOrderInvoiceEmail}
                   navigateTo={navigateTo}
-                  focusTab={adminFocusTab}
-                  onFocusTabHandled={() => setAdminFocusTab(null)}
                   focusOrderId={adminFocusOrderId}
                   onFocusOrderHandled={() => setAdminFocusOrderId(null)}
-                  onActiveTabChange={setAdminActiveTab}
+                  onActiveTabChange={(tab) => {
+                    if (tab !== currentAdminTab) {
+                      openAdminTab(tab);
+                    }
+                  }}
                />;
       case 'admin-register-authentication':
         return (
@@ -1219,33 +1323,7 @@ const App: React.FC = () => {
           />
         );
       case 'admin-not-found':
-        return (
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
-            <div className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-amber-700">
-              Route introuvable
-            </div>
-            <h1 className="mt-4 text-3xl font-black text-slate-950">Page admin introuvable</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
-              Cette URL admin n’existe pas ou n’est pas encore rattachée au shell Tunibots.
-            </p>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => openAdminTab('overview')}
-                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800"
-              >
-                Retour dashboard
-              </button>
-              <button
-                type="button"
-                onClick={() => navigateTo('admin-register-authentication')}
-                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50"
-              >
-                Auth & Register
-              </button>
-            </div>
-          </div>
-        );
+        return <AdminNotFoundPage openAdminTab={openAdminTab} navigateTo={navigateTo} />;
       
       case 'user-dashboard': return (
         <UserDashboard
@@ -1285,6 +1363,28 @@ const App: React.FC = () => {
     }
   };
 
+  if (shouldShowStoreLoader) {
+    return (
+      <StoreBootLoader
+        siteConfig={siteConfig}
+        message={
+          !isCatalogResolved
+            ? 'Le catalogue, les produits et les visuels du store sont en cours de chargement.'
+            : 'Vérification sécurisée de votre session en cours.'
+        }
+      />
+    );
+  }
+
+  if (
+    (currentPage === 'admin-dashboard' ||
+      currentPage === 'admin-register-authentication' ||
+      currentPage === 'admin-not-found') &&
+    !isAdminRole(user.role)
+  ) {
+    return <RouteLoadingScreen title="Redirection sécurisée" message="Redirection vers l’accès administrateur autorisé." />;
+  }
+
   if (currentPage === 'admin-login') {
     return renderContent();
   }
@@ -1309,10 +1409,8 @@ const App: React.FC = () => {
         onCloseNotificationCenter={() => setIsAdminNotificationCenterOpen(false)}
         onMarkAllNotificationsRead={markAllAdminNotificationsRead}
         onOpenAdminNotification={openAdminNotificationOrder}
-        activeTab={currentPage === 'admin-dashboard' ? adminActiveTab : ''}
-        onNavClick={(tabId) => {
-          openAdminTab(tabId as AdminTab);
-        }}
+        activeTab={currentAdminTab}
+        onNavClick={openAdminTab}
         onNavigateRegisterAuth={() => navigateTo('admin-register-authentication')}
         pendingOrdersCount={pendingOrdersCount}
         newUsersCount={0}
@@ -1327,7 +1425,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <Layout 
+    <StoreLayout 
       user={user} 
       onLogout={handleLogout} 
       cartCount={cartCount} 
@@ -1339,7 +1437,7 @@ const App: React.FC = () => {
       siteConfig={siteConfig}
     >
       {renderContent()}
-    </Layout>
+    </StoreLayout>
   );
 };
 

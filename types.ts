@@ -129,6 +129,7 @@ export interface User {
 export interface Listing {
   id: string;
   title: string;
+  slug: string;
   description: string;
   price: number;
   isArchived?: boolean;
@@ -196,6 +197,9 @@ export interface SiteConfig {
   siteName: string;
   logoSize?: number;
   faviconUrl?: string;
+  startupLoaderEnabled?: boolean;
+  startupLoaderImageUrl?: string;
+  startupLoaderBackground?: string;
   primaryColor?: string;
   heroSlides?: HeroSlide[];
   heroPromoBanners?: HeroPromoBanner[];

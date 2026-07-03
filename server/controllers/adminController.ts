@@ -9,6 +9,7 @@ import { DEFAULT_EMAIL_TEMPLATES, getEmailTemplate, renderTemplate, sendEmail } 
 import { resendOrderConfirmationEmail, sendDeliveryEmail, sendPaymentApprovedEmail } from '../services/orderEmailService.js';
 import { encryptDeliveryContent, decryptDeliveryContent } from '../services/deliverySecurityService.js';
 import { notifyClientOrderStatus, sendCustomClientNotification } from '../services/clientNotificationService.js';
+import { buildUniqueProductSlug, buildUniqueProductSlugFromInput } from '../utils/productSlug.js';
 
 const SITE_CONFIG_KEY = 'site';
 const legacySiteConfigPath = path.join(process.cwd(), 'server', 'data', 'site-config.json');
@@ -18,6 +19,9 @@ type SiteConfigData = {
     siteName: string;
     logoSize: number;
     faviconUrl: string;
+    startupLoaderEnabled: boolean;
+    startupLoaderImageUrl: string;
+    startupLoaderBackground: string;
     primaryColor: string;
     heroSlides: unknown[];
     heroPromoBanners: unknown[];
@@ -83,6 +87,9 @@ const defaultSiteConfig: SiteConfigData = {
     siteName: 'TuniBots',
     logoSize: 32,
     faviconUrl: '',
+    startupLoaderEnabled: false,
+    startupLoaderImageUrl: '',
+    startupLoaderBackground: '#020617',
     primaryColor: '',
     heroSlides: [],
     heroPromoBanners: [],
@@ -800,6 +807,7 @@ export const exportSiteData = async (_req: Request, res: Response) => {
     productSheet.columns = [
         { header: 'id', key: 'id' },
         { header: 'title', key: 'title' },
+        { header: 'slug', key: 'slug' },
         { header: 'description', key: 'description' },
         { header: 'price', key: 'price' },
         { header: 'categoryId', key: 'categoryId' },
@@ -934,8 +942,12 @@ export const importSiteData = async (req: Request, res: Response) => {
             })
             : null;
         const variants = parseVariantString(row.variants);
+        const slug = row.slug
+            ? await buildUniqueProductSlugFromInput(row.slug, { fallback: row.title || row.game || null, excludeId: row.id || undefined })
+            : await buildUniqueProductSlug(row.title, { fallback: row.game || null, excludeId: row.id || undefined });
         const data = {
             title: row.title,
+            slug,
             description: row.description || '',
             price: Number(row.price) || 0,
             categoryId: category.id,

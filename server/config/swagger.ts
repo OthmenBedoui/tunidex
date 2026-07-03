@@ -1,5 +1,7 @@
 import swaggerJsdoc from 'swagger-jsdoc';
 
+const publicAppUrl = (process.env.AUTH_URL || 'http://localhost:3000').replace(/\/$/, '');
+
 const options = {
   definition: {
     openapi: '3.0.0',
@@ -14,8 +16,8 @@ const options = {
     },
     servers: [
       {
-        url: `http://localhost:3000`,
-        description: 'Local Development Server',
+        url: publicAppUrl,
+        description: publicAppUrl.includes('localhost') ? 'Local Development Server' : 'Public Production Server',
       },
     ],
     components: {
@@ -57,6 +59,7 @@ const options = {
           properties: {
             id: { type: 'string', format: 'uuid' },
             title: { type: 'string' },
+            slug: { type: 'string' },
             price: { type: 'number' },
             isArchived: { type: 'boolean' },
             discountPercent: { type: 'integer', minimum: 0, maximum: 95 },
