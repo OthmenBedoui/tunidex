@@ -23,6 +23,9 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
 
+  // Trust the reverse proxy so req.protocol and client IPs stay correct behind Nginx.
+  app.set('trust proxy', 1);
+
   // Middleware
   app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
   app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -64,12 +67,12 @@ async function startServer() {
     const baseUrl = (config?.seoCanonicalUrl || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
     const [categories, listings] = await Promise.all([
       prisma.category.findMany({ select: { slug: true } }),
-      prisma.listing.findMany({ where: { isArchived: false }, select: { id: true, updatedAt: true } })
+      prisma.listing.findMany({ where: { isArchived: false }, select: { slug: true, updatedAt: true } })
     ]);
     const urls = [
       { loc: `${baseUrl}/`, lastmod: new Date().toISOString() },
       ...categories.map((category) => ({ loc: `${baseUrl}/category/${encodeURIComponent(category.slug)}`, lastmod: new Date().toISOString() })),
-      ...listings.map((listing) => ({ loc: `${baseUrl}/product?item=${encodeURIComponent(listing.id)}`, lastmod: listing.updatedAt.toISOString() }))
+      ...listings.map((listing) => ({ loc: `${baseUrl}/product/${encodeURIComponent(listing.slug)}`, lastmod: listing.updatedAt.toISOString() }))
     ];
 
     res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((url) => `  <url><loc>${url.loc}</loc><lastmod>${url.lastmod}</lastmod></url>`).join('\n')}\n</urlset>`);

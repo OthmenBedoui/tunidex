@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../prisma.js';
 import { Prisma } from '@prisma/client';
 import jwt from 'jsonwebtoken';
+import { buildUniqueProductSlug } from '../utils/productSlug.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret-key-g2g-tunisie';
 
@@ -325,9 +326,12 @@ export const createListing = async (req: Request, res: Response) => {
     await validatePackageItems(null, normalizedPackageItems);
   }
 
+  const slug = await buildUniqueProductSlug(title, { fallback: game });
+
   const listing = await prisma.listing.create({
     data: {
       game: game || null,
+      slug,
       platform: platform || null,
       region: region || null,
       source: normalizedSource,
@@ -549,10 +553,24 @@ export const updateListing = async (req: Request, res: Response) => {
     await validatePackageItems(id, normalizedPackageItems);
   }
 
+  const existingListing = await prisma.listing.findUnique({
+    where: { id },
+    select: { id: true, slug: true, title: true, game: true }
+  });
+
+  if (!existingListing) {
+    return res.status(404).json({ error: 'Produit introuvable.' });
+  }
+
+  const nextTitle = typeof title === 'string' ? title : existingListing.title;
+  const nextGame = typeof game === 'string' ? game : existingListing.game;
+  const slug = await buildUniqueProductSlug(nextTitle, { fallback: nextGame, excludeId: id });
+
   const listing = await prisma.listing.update({
     where: { id },
     data: {
       game: game || null,
+      slug,
       platform: platform || null,
       region: region || null,
       ...(includeSource ? { source: normalizedSource } : {}),

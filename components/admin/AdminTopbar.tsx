@@ -14,11 +14,12 @@ import {
 } from 'lucide-react';
 import { SiteConfig, User } from '../../types';
 import type { AdminNotificationItem } from '../../App';
+import { AdminTab } from '../../pages/admin/adminRouteConfig';
 
 interface AdminTopbarProps {
   user: User;
   siteConfig: SiteConfig;
-  activeTab: string;
+  activeTab: AdminTab;
   onOpenStore: () => void;
   onToggleNotificationCenter: () => void;
   unreadCount: number;

@@ -17,11 +17,12 @@ import {
   Users
 } from 'lucide-react';
 import { SiteConfig, User, UserRole } from '../../types';
+import { AdminNavItem, AdminTab, adminNavGroups } from '../../pages/admin/adminRouteConfig';
 
 interface AdminSidebarProps {
   user: User;
-  activeTab: string;
-  onNavClick: (tabId: string) => void;
+  activeTab: AdminTab;
+  onNavClick: (tabId: AdminTab) => void;
   onNavigateRegisterAuth: () => void;
   onLogout: () => void;
   siteConfig: SiteConfig;
@@ -29,48 +30,22 @@ interface AdminSidebarProps {
   newUsersCount?: number;
 }
 
-type NavItem = {
-  id: string;
-  label: string;
-  icon: React.ComponentType<{ size?: string | number; className?: string }>;
-  badge?: number;
-  cta?: boolean;
-  adminOnly?: boolean;
-  staffOnly?: boolean;
-  registerAuth?: boolean;
-};
-
-const navGroups: Array<{ label: string; items: NavItem[] }> = [
-  {
-    label: 'Pilotage',
-    items: [
-      { id: 'overview', label: 'Dashboard', icon: TrendingUp },
-      { id: 'orders', label: 'Commandes', icon: ShoppingCart },
-      { id: 'listings', label: 'Produits', icon: Box },
-      { id: 'create', label: 'Ajouter produit', icon: PlusCircle, cta: true }
-    ]
-  },
-  {
-    label: 'Catalogue & Clients',
-    items: [
-      { id: 'categories', label: 'Catégories', icon: FolderTree, staffOnly: true },
-      { id: 'users', label: 'Utilisateurs', icon: Users, staffOnly: true }
-    ]
-  },
-  {
-    label: 'Configuration',
-    items: [
-      { id: 'store-config', label: 'Store Config', icon: Store, adminOnly: true },
-      { id: 'customization', label: 'Store Design', icon: Palette, adminOnly: true },
-      { id: 'email-config', label: 'SMTP & Notifs', icon: Mail, adminOnly: true },
-      { id: 'notification-config', label: 'SMS / OTP', icon: Smartphone, adminOnly: true },
-      { id: '__register-auth__', label: 'Auth & Register', icon: ShieldCheck, adminOnly: true, registerAuth: true },
-      { id: 'seo', label: 'SEO / Marketing', icon: SearchCheck, adminOnly: true },
-      { id: 'settings', label: 'Paramètres', icon: Settings, adminOnly: true },
-      { id: 'data', label: 'Data & Maintenance', icon: Database, adminOnly: true }
-    ]
-  }
-];
+const iconMap = {
+  Box,
+  Database,
+  FolderTree,
+  Mail,
+  Palette,
+  PlusCircle,
+  SearchCheck,
+  Settings,
+  ShieldCheck,
+  ShoppingCart,
+  Smartphone,
+  Store,
+  TrendingUp,
+  Users
+} satisfies Record<string, React.ComponentType<{ size?: string | number; className?: string }>>;
 
 const roleLabel = (role: UserRole) => {
   if (role === UserRole.ADMIN) return 'Administrateur';
@@ -79,8 +54,9 @@ const roleLabel = (role: UserRole) => {
   return role;
 };
 
-const canSeeItem = (user: User, item: NavItem) => {
+const canSeeItem = (user: User, item: AdminNavItem) => {
   if (item.adminOnly) return user.role === UserRole.ADMIN;
+  if (item.id === 'users') return user.role === UserRole.ADMIN;
   if (item.staffOnly) return user.role === UserRole.ADMIN || user.role === UserRole.SUB_ADMIN;
   return true;
 };
@@ -124,7 +100,7 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({
 
     <div className="flex-1 px-3 py-4">
       <nav className="space-y-5">
-        {navGroups.map((group) => {
+        {adminNavGroups.map((group) => {
           const items = group.items.filter((item) => canSeeItem(user, item));
           if (items.length === 0) return null;
 
@@ -135,15 +111,15 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({
               </div>
               <div className="space-y-1">
                 {items.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeTab === item.id;
+                  const Icon = iconMap[item.icon as keyof typeof iconMap] || Box;
+                  const isActive = item.id !== '__register-auth__' && activeTab === item.id;
 
                   if (item.cta) {
                     return (
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => onNavClick(item.id)}
+                        onClick={() => onNavClick(item.id as AdminTab)}
                         className="mt-2 flex w-full items-center gap-3 rounded-xl bg-indigo-600 px-3 py-2.5 text-left text-sm font-bold text-white transition hover:bg-indigo-700"
                       >
                         <Icon size={18} />
@@ -156,7 +132,7 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({
                     <button
                       key={item.id}
                       type="button"
-                      onClick={() => (item.registerAuth ? onNavigateRegisterAuth() : onNavClick(item.id))}
+                      onClick={() => (item.registerAuth ? onNavigateRegisterAuth() : onNavClick(item.id as AdminTab))}
                       className={[
                         'flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition',
                         isActive

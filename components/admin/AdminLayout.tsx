@@ -5,6 +5,7 @@ import type { AdminNotificationItem } from '../../App';
 import { useThemeMode } from '../../utils/themeMode';
 import AdminSidebar from './AdminSidebar';
 import AdminTopbar from './AdminTopbar';
+import { AdminTab } from '../../pages/admin/adminRouteConfig';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -21,8 +22,8 @@ interface AdminLayoutProps {
   onCloseNotificationCenter?: () => void;
   onMarkAllNotificationsRead?: () => void;
   onOpenAdminNotification?: (item: AdminNotificationItem) => void;
-  activeTab?: string;
-  onNavClick?: (tabId: string) => void;
+  activeTab?: AdminTab;
+  onNavClick?: (tabId: AdminTab) => void;
   onNavigateRegisterAuth?: () => void;
   pendingOrdersCount?: number;
   newUsersCount?: number;
@@ -43,7 +44,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
   onCloseNotificationCenter,
   onMarkAllNotificationsRead,
   onOpenAdminNotification,
-  activeTab = '',
+  activeTab = 'overview',
   onNavClick,
   onNavigateRegisterAuth,
   pendingOrdersCount = 0,
