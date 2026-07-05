@@ -1,8 +1,7 @@
 export enum UserRole {
   GUEST = 'GUEST',
-  CLIENT = 'CLIENT',
-  SELLER = 'SELLER',
-  SUB_ADMIN = 'SUB_ADMIN',
+  USER = 'USER',
+  AGENT = 'AGENT',
   ADMIN = 'ADMIN'
 }
 
@@ -15,6 +14,7 @@ export enum SubscriptionTier {
 export enum OrderStatus {
   DRAFT_CART = 'DRAFT_CART',
   IN_PROGRESS = 'IN_PROGRESS',
+  PAID = 'PAID',
   DELIVERED = 'DELIVERED',
   REGISTERED = 'REGISTERED',
   PENDING_PAYMENT = 'PENDING_PAYMENT',
@@ -31,6 +31,7 @@ export enum OrderStatus {
 export enum PaymentStatus {
   PENDING = 'PENDING',
   SUBMITTED = 'SUBMITTED',
+  PAID = 'PAID',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
   EXPIRED = 'EXPIRED'
@@ -183,6 +184,8 @@ export interface Listing {
   metaDesc?: string;
   keywords?: string;
   salesCount?: number;
+  ratingAverage?: number;
+  ratingCount?: number;
 
   // Product Key Management
   productType: ProductType;
@@ -222,8 +225,21 @@ export interface SiteConfig {
   footerEmail?: string;
   footerPhone?: string;
   footerWhatsapp?: string;
+  whatsappContactNumber?: string;
+  whatsappFloatingButtonEnabled?: boolean;
   footerAddress?: string;
   footerCopyright?: string;
+  cgvPageTitle?: string;
+  cgvPageContent?: string;
+  refundPageTitle?: string;
+  refundPageContent?: string;
+  howItWorksPageTitle?: string;
+  howItWorksPageContent?: string;
+  faqPageTitle?: string;
+  faqPageIntro?: string;
+  faqItems?: Array<{ question: string; answer: string }>;
+  invoiceIssuerName?: string;
+  invoiceLegalMentions?: string;
   seoTitle?: string;
   seoDescription?: string;
   seoKeywords?: string;
@@ -244,10 +260,14 @@ export interface SiteConfig {
   smtpEmailId?: string;
   smtpEncryption?: string;
   smtpPassword?: string;
+  paymentMethods?: PaymentMethodConfig[];
   emailTemplates?: Record<string, { subject: string; html: string }>;
   adminNotificationsEnabled?: boolean;
   adminNotificationSound?: boolean;
   adminNotificationPollSeconds?: number;
+  paymentReviewReminderHours?: number;
+  loyaltyPointsPerDinar?: number;
+  loyaltyMaxDiscountPercent?: number;
   whatsappNotificationsEnabled?: boolean;
   whatsappNotificationWebhookUrl?: string;
   telegramNotificationsEnabled?: boolean;
@@ -260,6 +280,15 @@ export interface SiteConfig {
   click2payMerchantId?: string;
   click2payApiKey?: string;
   authProviders?: Record<string, { enabled: boolean; lastUpdatedAt?: string }>;
+}
+
+export interface PaymentMethodConfig {
+  id: string;
+  label: string;
+  instructions: string;
+  accountDetails: string;
+  isActive: boolean;
+  sortOrder?: number;
 }
 
 export type AuthProviderKey =
@@ -306,6 +335,70 @@ export interface PublicAuthProvider {
   name: string;
   description: string;
   authUrl: string;
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  nextCursor: string | null;
+}
+
+export interface UploadAssetResponse {
+  url: string;
+  absoluteUrl: string;
+  relativePath: string;
+  contentType: 'image/webp';
+  width: number;
+  height: number;
+  size: number;
+}
+
+export type AdminOrderListSort = 'newest' | 'oldest' | 'amount-desc' | 'amount-asc';
+export type AdminUserListSort = 'newest' | 'oldest' | 'email-asc' | 'email-desc' | 'balance-desc' | 'balance-asc';
+export type ListingListSort = 'newest' | 'oldest' | 'price-asc' | 'price-desc' | 'title-asc' | 'title-desc';
+export type BlogPostListSort = 'newest' | 'oldest';
+
+export interface AdminOrdersQueryParams {
+  page?: number;
+  cursor?: string;
+  limit?: number;
+  status?: OrderStatus | 'all';
+  q?: string;
+  sort?: AdminOrderListSort;
+}
+
+export interface AdminUsersQueryParams {
+  page?: number;
+  cursor?: string;
+  limit?: number;
+  role?: UserRole | 'all';
+  q?: string;
+  sort?: AdminUserListSort;
+}
+
+export interface ListingsQueryParams {
+  page?: number;
+  cursor?: string;
+  limit?: number;
+  q?: string;
+  sort?: ListingListSort;
+  scope?: 'public' | 'all' | 'archived';
+}
+
+export interface BlogPostsQueryParams {
+  page?: number;
+  cursor?: string;
+  limit?: number;
+  tag?: string;
+  sort?: BlogPostListSort;
+  status?: 'PUBLISHED' | 'DRAFT' | 'all';
+  q?: string;
+}
+
+export interface ReviewsQueryParams {
+  page?: number;
+  cursor?: string;
+  limit?: number;
 }
 
 export interface CustomFont {
@@ -371,6 +464,48 @@ export interface OrderItem {
   deliveryType?: string;
   status?: string;
   deliveredContent?: string; // The login/pass or key delivered to the customer
+  review?: Review | null;
+}
+
+export interface Review {
+  id: string;
+  userId: string;
+  listingId: string;
+  orderId: string;
+  rating: number;
+  comment: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | string;
+  createdAt: string;
+  user?: Pick<User, 'id' | 'username' | 'avatarUrl'>;
+  listing?: Pick<Listing, 'id' | 'title' | 'slug' | 'imageUrl'>;
+  order?: Pick<Order, 'id' | 'orderNumber'>;
+}
+
+export interface BlogPost {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt: string;
+  content: string;
+  coverUrl?: string | null;
+  tags: string[];
+  status: 'DRAFT' | 'PUBLISHED';
+  publishedAt?: string | null;
+  authorId: string;
+  author?: Pick<User, 'id' | 'username' | 'email' | 'avatarUrl'>;
+  views: number;
+  createdAt: string;
+  updatedAt: string;
+  relatedListings?: Array<Pick<Listing, 'id' | 'title' | 'slug' | 'imageUrl' | 'price' | 'discountType' | 'discountValue' | 'discountPercent' | 'logoUrl' | 'game' | 'isInstant' | 'stock' | 'deliveryTimeHours' | 'productType' | 'gallery' | 'categoryId'> & Partial<Listing>>;
+}
+
+export interface ReviewSummary {
+  average: number;
+  count: number;
+}
+
+export interface ReviewsResponse extends PaginatedResponse<Review> {
+  summary: ReviewSummary;
 }
 
 export interface Payment {
@@ -382,11 +517,33 @@ export interface Payment {
   currency: string;
   customerReference?: string | null;
   proofFileUrl?: string | null;
+  reference?: string | null;
+  proofUrl?: string | null;
+  declaredAt?: string | null;
   submittedAt?: string;
   approvedAt?: string | null;
   rejectedAt?: string | null;
   reviewedBy?: string | null;
   rejectionReason?: string | null;
+}
+
+export interface LoyaltyPointEntry {
+  id: string;
+  userId: string;
+  orderId?: string | null;
+  points: number;
+  type: string;
+  description?: string | null;
+  expiresAt?: string | null;
+  createdAt: string;
+}
+
+export interface LoyaltySummary {
+  balance: number;
+  redeemableAmount: number;
+  pointsPerDinar: number;
+  maxDiscountPercent: number;
+  history: LoyaltyPointEntry[];
 }
 
 export interface Delivery {
@@ -416,6 +573,15 @@ export interface OrderActionLog {
   createdAt: string;
 }
 
+export interface OrderStatusHistoryEntry {
+  key: string;
+  label: string;
+  status: string;
+  state: 'done' | 'current' | 'upcoming';
+  happenedAt?: string | null;
+  description?: string;
+}
+
 export interface ClientNotification {
   id: string;
   userId: string;
@@ -426,6 +592,8 @@ export interface ClientNotification {
   title: string;
   message: string;
   metadata?: Record<string, unknown> | null;
+  targetTab?: string | null;
+  audience?: 'CLIENT' | 'ADMIN' | null;
   read: boolean;
   readAt?: string | null;
   createdAt: string;
@@ -457,6 +625,8 @@ export interface GuestCheckoutPayload {
   email: string;
   phone: string;
   paymentMethod?: string;
+  useLoyaltyPoints?: boolean;
+  couponCode?: string;
   customerReference?: string;
   paymentProof?: {
     fileName: string;
@@ -483,6 +653,7 @@ export interface Order {
   amount: number;
   subtotal?: number;
   discount?: number;
+  couponCode?: string | null;
   total?: number;
   currency?: string;
   customerType?: 'USER' | 'GUEST';
@@ -500,6 +671,35 @@ export interface Order {
   payments?: Payment[];
   deliveries?: Delivery[];
   actionLogs?: OrderActionLog[];
+  statusHistory?: OrderStatusHistoryEntry[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Coupon {
+  id: string;
+  code: string;
+  type: 'PERCENT' | 'FIXED';
+  value: number;
+  minAmount?: number | null;
+  maxUses?: number | null;
+  usedCount: number;
+  validFrom?: string | null;
+  validTo?: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  usageCount?: number;
+  totalDiscountAmount?: number;
+}
+
+export interface CouponValidationResult {
+  valid: boolean;
+  code?: string;
+  type?: 'PERCENT' | 'FIXED';
+  value?: number;
+  subtotal: number;
+  discountAmount: number;
+  finalSubtotal: number;
+  message?: string;
 }

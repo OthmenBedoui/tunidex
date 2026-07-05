@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { getAuthProviderDefinition, readEnvValues, writeEnvValues, maskSecret, AUTH_PROVIDER_DEFINITIONS, isSupportedPublicAuthProvider } from '../utils/authProviders.js';
-import { readSiteConfig, writeSiteConfig } from './adminController.js';
+import { readSiteConfig, writeSiteConfig } from '../services/siteConfigService.js';
 
 type AuthProviderMetadata = {
   enabled: boolean;

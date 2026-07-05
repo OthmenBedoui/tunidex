@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { LayoutDashboard, LogIn, LogOut, Menu, Moon, Search, ShoppingCart, Sun, User as UserIcon } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { Category, SiteConfig, User, UserRole } from '../../../types';
+import { useMyLoyalty } from '../../../src/hooks/useMyLoyalty';
 import { useThemeMode } from '../../../utils/themeMode';
 import StoreCategoryRail from './StoreCategoryRail';
 
@@ -28,10 +29,17 @@ const StoreHeader: React.FC<StoreHeaderProps> = ({
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const { themeMode, toggleThemeMode } = useThemeMode();
   const logoSize = Math.min(80, Math.max(24, Number(siteConfig.logoSize || 32)));
+  const loyaltyQuery = useMyLoyalty(user.role === UserRole.USER);
 
   return (
     <>
-      <div className="bg-black px-4 py-2 text-center text-xs font-black tracking-wide text-white">
+      <div
+        className="border-b border-white/10 px-4 py-2 text-center text-xs font-black tracking-[0.2em] text-white shadow-[0_10px_30px_rgba(227,70,0,0.28)]"
+        style={{
+          backgroundImage:
+            'linear-gradient(135deg, #ff8100 0%, #ff6a00 32%, #f05a00 60%, #e34600 100%)'
+        }}
+      >
         {siteConfig.headerAnnouncement || 'Bienvenue sur la première plateforme digitale en Tunisie !'}
       </div>
 
@@ -100,6 +108,16 @@ const StoreHeader: React.FC<StoreHeaderProps> = ({
                 )}
               </button>
 
+              {user.role === UserRole.USER && (
+                <button
+                  type="button"
+                  onClick={() => navigateTo('user-dashboard')}
+                  className="hidden rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-black text-emerald-200 sm:inline-flex"
+                >
+                  {loyaltyQuery.data?.balance || 0} pts
+                </button>
+              )}
+
               {user.role === UserRole.GUEST ? (
                 <div className="ml-2 flex items-center space-x-2">
                   <button
@@ -134,7 +152,7 @@ const StoreHeader: React.FC<StoreHeaderProps> = ({
                       >
                         <UserIcon size={16} className="mr-2" /> Mon Profil
                       </button>
-                      {(user.role === UserRole.ADMIN || user.role === UserRole.SUB_ADMIN || user.role === UserRole.SELLER) && (
+                      {(user.role === UserRole.ADMIN || user.role === UserRole.AGENT) && (
                         <button
                           onClick={() => {
                             navigateTo('admin-dashboard');
@@ -145,7 +163,7 @@ const StoreHeader: React.FC<StoreHeaderProps> = ({
                           <LayoutDashboard size={16} className="mr-2" /> Admin Panel
                         </button>
                       )}
-                      {user.role === UserRole.CLIENT && (
+                      {user.role === UserRole.USER && (
                         <button
                           onClick={() => {
                             navigateTo('user-dashboard');

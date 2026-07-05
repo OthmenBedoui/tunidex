@@ -1,7 +1,7 @@
 import React from 'react';
 import { AlertCircle, Bell, CheckCircle2, ClipboardList, X } from 'lucide-react';
 import { SiteConfig, User } from '../../types';
-import type { AdminNotificationItem } from '../../App';
+import type { AdminNotificationItem } from '../../src/types/adminNotifications';
 import { useThemeMode } from '../../utils/themeMode';
 import AdminSidebar from './AdminSidebar';
 import AdminTopbar from './AdminTopbar';

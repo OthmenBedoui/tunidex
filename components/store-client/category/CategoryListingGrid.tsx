@@ -4,6 +4,7 @@ import { Listing } from '../../../types';
 import { getListingDiscountLabel, hasListingDiscount } from '../../../utils/pricing';
 import { ListingImage } from '../ListingImage';
 import PriceDisplay from '../PriceDisplay';
+import StarRating from '../reviews/StarRating';
 
 interface CategoryListingGridProps {
   listings: Listing[];
@@ -55,6 +56,12 @@ const CategoryListingGrid: React.FC<CategoryListingGridProps> = ({
             <h3 className="mb-2 cursor-pointer text-base font-bold text-slate-900 line-clamp-2 hover:text-indigo-600" onClick={() => onViewProduct(listing)}>
               {listing.title}
             </h3>
+            <div className="mb-3 flex items-center gap-2">
+              <StarRating rating={Math.round(listing.ratingAverage || 0)} size={12} />
+              <span className="text-xs text-slate-400">
+                {listing.ratingCount ? `${(listing.ratingAverage || 0).toFixed(1)} (${listing.ratingCount})` : 'Nouveau'}
+              </span>
+            </div>
             <div className="mb-4 text-xs text-slate-500">{getListingMeta(listing)}</div>
             <div className="mt-auto flex items-center justify-between border-t border-slate-50 pt-4">
               <PriceDisplay listing={listing} priceClassName="text-xl font-black text-slate-900" />

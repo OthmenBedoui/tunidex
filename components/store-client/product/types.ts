@@ -1,4 +1,4 @@
-import { Category, Listing } from '../../../types';
+import { Category, Listing, SiteConfig } from '../../../types';
 
 export interface StoreProductPageProps {
   product: Listing;
@@ -8,6 +8,7 @@ export interface StoreProductPageProps {
   onAddToCart: () => void;
   onBuyNow: () => void;
   navigateTo: (page: string, slug?: string) => void;
+  siteConfig: SiteConfig;
 }
 
 export interface ProductInfoAction {

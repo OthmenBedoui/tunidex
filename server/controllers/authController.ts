@@ -1,17 +1,20 @@
 
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import prisma from '../prisma.js';
-import { getEmailTemplate, renderTemplate, sendEmail } from '../utils/email.js';
+import { clearRefreshTokenCookie, issueAuthSession, revokeRefreshTokenFromRequest, rotateRefreshToken } from '../services/authTokenService.js';
+import { queueEmail } from '../services/emailService.js';
+import { notifyStaff } from '../services/notificationService.js';
 import { buildWelcomeMessage, isSupportedWhatsappBot, sendWhatsappWelcomeMessage } from '../services/whatsappBotService.js';
+import logger from '../logger.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'secret-key-g2g-tunisie';
 const OTP_EXPIRY_MINUTES = 10;
-const DEFAULT_ADMIN_EMAIL = process.env.DEFAULT_ADMIN_EMAIL || 'admin@tunibots.com';
-const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'l$?oF&9/35W?';
 
 const generateOtpCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+const logNotificationFailure = (event: string, error: unknown, details: Record<string, unknown>) => {
+  logger.error({ event, ...details, err: error }, 'notification_event_failed');
+};
 
 const sanitizeUser = <T extends { password?: string }>(user: T) => {
   const result = { ...user };
@@ -20,13 +23,11 @@ const sanitizeUser = <T extends { password?: string }>(user: T) => {
 };
 
 const sendOtpEmail = async (email: string, username: string, otpCode: string) => {
-  const template = await getEmailTemplate('registrationOtp');
-  const variables = { username, otpCode, otpExpiryMinutes: OTP_EXPIRY_MINUTES };
-  await sendEmail(
-    email,
-    renderTemplate(template.subject, variables),
-    renderTemplate(template.html, variables)
-  );
+  await queueEmail({
+    to: email,
+    template: 'registrationOtp',
+    payload: { username, otpCode, otpExpiryMinutes: OTP_EXPIRY_MINUTES }
+  });
 };
 
 /**
@@ -61,55 +62,13 @@ export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
-  if (normalizedEmail === DEFAULT_ADMIN_EMAIL.toLowerCase() && password === DEFAULT_ADMIN_PASSWORD) {
-    const hashedAdminPassword = await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10);
-    const existingAdmin = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: normalizedEmail },
-          { username: 'SuperAdmin' }
-        ]
-      }
-    });
-
-    if (existingAdmin) {
-      await prisma.user.update({
-        where: { id: existingAdmin.id },
-        data: {
-          email: normalizedEmail,
-          username: 'SuperAdmin',
-          password: hashedAdminPassword,
-          role: 'ADMIN',
-          subscriptionTier: 'Elite',
-          emailVerified: true,
-          emailVerificationCode: null,
-          emailVerificationExpiresAt: null
-        }
-      });
-    } else {
-      await prisma.user.create({
-        data: {
-        email: normalizedEmail,
-        username: 'SuperAdmin',
-        password: hashedAdminPassword,
-        role: 'ADMIN',
-        subscriptionTier: 'Elite',
-        avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Admin',
-        emailVerified: true,
-        emailVerificationCode: null,
-        emailVerificationExpiresAt: null
-        }
-      }
-      );
-    }
-  }
-
   const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
   if (!user || !await bcrypt.compare(password, user.password)) return res.status(400).json({ error: 'Invalide' });
   if (!user.emailVerified) {
     return res.status(403).json({ error: 'Confirmez votre adresse email avec le code OTP avant de vous connecter.' });
   }
-  const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET);
+  const { accessToken } = await issueAuthSession(req, res, { id: user.id, role: user.role });
+  const token = accessToken;
   res.json({ token, user: sanitizeUser(user) });
 };
 
@@ -200,7 +159,7 @@ export const register = async (req: Request, res: Response) => {
         email: normalizedEmail,
         password: passwordHash,
         username: username.trim(),
-        role: 'CLIENT',
+        role: 'USER',
         fullName: fullName.trim(),
         address: address.trim(),
         phone: phone.trim(),
@@ -238,8 +197,41 @@ export const verifyRegistrationOtp = async (req: Request, res: Response) => {
     }
   });
 
-  const token = jwt.sign({ id: verifiedUser.id, role: verifiedUser.role }, JWT_SECRET);
+  try {
+    await notifyStaff({
+      type: 'USER_REGISTERED',
+      title: 'Nouvel utilisateur verifie',
+      message: `Le compte ${verifiedUser.username} (${verifiedUser.email}) vient d'etre verifie.`,
+      metadata: {
+        userId: verifiedUser.id,
+        email: verifiedUser.email,
+        username: verifiedUser.username
+      },
+      dedupeKey: `USER_REGISTERED:${verifiedUser.id}`,
+      targetTab: 'users'
+    });
+  } catch (error) {
+    logNotificationFailure('USER_REGISTERED', error, { userId: verifiedUser.id });
+  }
+
+  const { accessToken } = await issueAuthSession(req, res, { id: verifiedUser.id, role: verifiedUser.role });
+  const token = accessToken;
   res.json({ token, user: sanitizeUser(verifiedUser) });
+};
+
+export const refreshSession = async (req: Request, res: Response) => {
+  try {
+    const { accessToken, user } = await rotateRefreshToken(req, res);
+    res.json({ token: accessToken, user: sanitizeUser(user) });
+  } catch (error) {
+    clearRefreshTokenCookie(res);
+    return res.status(401).json({ error: error instanceof Error ? error.message : 'Unable to refresh session.' });
+  }
+};
+
+export const logout = async (req: Request, res: Response) => {
+  await revokeRefreshTokenFromRequest(req, res);
+  res.status(204).send();
 };
 
 export const resendRegistrationOtp = async (req: Request, res: Response) => {
@@ -483,7 +475,7 @@ export const deleteAccount = async (req: Request & { user?: { id: string } }, re
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  if (['ADMIN', 'SUB_ADMIN', 'SELLER', 'AGENT'].includes(user.role)) {
+  if (['ADMIN', 'AGENT'].includes(user.role)) {
     return res.status(403).json({ error: 'La suppression des comptes staff doit être effectuée par un administrateur.' });
   }
 

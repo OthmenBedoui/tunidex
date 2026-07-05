@@ -1,8 +1,9 @@
-
 import React, { useState, useRef } from 'react';
 import { Upload, Link as LinkIcon, X } from 'lucide-react';
+import { api } from '../../services/api';
 
 type UploadPreset = 'default' | 'siteLogo' | 'favicon' | 'avatar' | 'icon';
+type UploadMode = 'inline' | 'server';
 
 interface ImageInputProps {
   value: string;
@@ -10,6 +11,7 @@ interface ImageInputProps {
   label: string;
   placeholder?: string;
   uploadPreset?: UploadPreset;
+  uploadMode?: UploadMode;
 }
 
 const PRESET_CONFIG: Record<UploadPreset, { maxWidth: number; maxHeight: number; quality: number; outputType: 'image/webp' | 'image/png'; previewFit: 'cover' | 'contain'; maxBytes: number }> = {
@@ -90,12 +92,14 @@ const processImageFile = async (file: File, preset: UploadPreset) => {
   throw new Error("Image trop lourde. Essaie un fichier plus petit ou un logo PNG/WebP plus simple.");
 };
 
-export const ImageInput: React.FC<ImageInputProps> = ({ value, onChange, label, placeholder, uploadPreset = 'default' }) => {
+export const ImageInput: React.FC<ImageInputProps> = ({ value, onChange, label, placeholder, uploadPreset = 'default', uploadMode = 'inline' }) => {
   const [mode, setMode] = useState<'url' | 'upload'>(value.startsWith('data:') ? 'upload' : 'url');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const presetConfig = PRESET_CONFIG[uploadPreset];
+  const isInlineValue = value.startsWith('data:');
+  const hasPreview = Boolean(value);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -103,8 +107,13 @@ export const ImageInput: React.FC<ImageInputProps> = ({ value, onChange, label, 
       try {
         setIsProcessing(true);
         setError('');
-        const processedImage = await processImageFile(file, uploadPreset);
-        onChange(processedImage);
+        if (uploadMode === 'server') {
+          const uploadedImage = await api.uploadImage(file);
+          onChange(uploadedImage.url);
+        } else {
+          const processedImage = await processImageFile(file, uploadPreset);
+          onChange(processedImage);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Erreur lors de l'upload.");
       } finally {
@@ -147,10 +156,10 @@ export const ImageInput: React.FC<ImageInputProps> = ({ value, onChange, label, 
             type="text" 
             className="w-full border border-slate-200 p-2 rounded-lg bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-sm" 
             placeholder={placeholder || "https://..."} 
-            value={value.startsWith('data:') ? '' : value} 
+            value={isInlineValue ? '' : value} 
             onChange={(e) => onChange(e.target.value)} 
           />
-          {value && !value.startsWith('data:') && (
+          {value && !isInlineValue && (
             <button onClick={clearImage} className="absolute right-2 top-2 text-slate-400 hover:text-slate-600">
               <X size={16} />
             </button>
@@ -158,7 +167,7 @@ export const ImageInput: React.FC<ImageInputProps> = ({ value, onChange, label, 
         </div>
       ) : (
         <div className="space-y-2">
-          {!value || !value.startsWith('data:') ? (
+          {!hasPreview ? (
             <div 
               onClick={() => !isProcessing && fileInputRef.current?.click()}
               className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center transition-all group ${
@@ -172,7 +181,9 @@ export const ImageInput: React.FC<ImageInputProps> = ({ value, onChange, label, 
                 {isProcessing ? 'Optimisation en cours...' : 'Cliquez pour uploader'}
               </span>
               <span className="mt-1 text-[10px] text-slate-400 text-center">
-                {uploadPreset === 'siteLogo'
+                {uploadMode === 'server'
+                  ? 'Image uploadée, redimensionnée et convertie en WebP côté serveur.'
+                  : uploadPreset === 'siteLogo'
                   ? 'Logo PNG/WebP horizontal auto-optimisé pour rester compatible.'
                   : uploadPreset === 'favicon'
                     ? 'Icône optimisée en petit format.'

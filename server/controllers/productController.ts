@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
 import prisma from '../prisma.js';
 import { Prisma } from '@prisma/client';
-import jwt from 'jsonwebtoken';
 import { buildUniqueProductSlug } from '../utils/productSlug.js';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'secret-key-g2g-tunisie';
+import { verifyAccessToken } from '../services/authTokenService.js';
+import { buildNextCursor, resolvePagination } from '../utils/pagination.js';
+import { attachReviewSummariesToListings } from '../services/reviewService.js';
 
 const normalizeDiscountPercent = (value: unknown) => {
   const parsed = Number(value);
@@ -91,7 +91,7 @@ const isAdminRequest = (req: Request) => {
   if (!authHeader?.startsWith('Bearer ')) return false;
 
   try {
-    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET) as { role?: string };
+    const decoded = verifyAccessToken(authHeader.split(' ')[1]) as { role?: string };
     return decoded.role === 'ADMIN';
   } catch {
     return false;
@@ -215,25 +215,100 @@ const validatePackageItems = async (listingId: string | null, packageItems: Arra
  * @swagger
  * /api/listings:
  *   get:
- *     summary: Get all products
+ *     summary: Get paginated products
  *     tags: [Listings]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *       - in: query
+ *         name: cursor
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 25
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: sort
+ *         schema:
+ *           type: string
+ *           enum: [newest, oldest, price-asc, price-desc, title-asc, title-desc]
+ *       - in: query
+ *         name: scope
+ *         schema:
+ *           type: string
+ *           enum: [public, all, archived]
  *     responses:
  *       200:
- *         description: List of products
+ *         description: Paginated products
  *         content:
  *           application/json:
  *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Listing'
+ *               $ref: '#/components/schemas/PaginatedListingsResponse'
  */
 export const getListings = async (req: Request, res: Response) => {
   const includeSource = isAdminRequest(req);
-  const listings = await prisma.listing.findMany({
-    include: getListingInclude(),
-    orderBy: { createdAt: 'desc' }
+  const { page, limit, skip } = resolvePagination(req.query);
+  const search = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const scope = typeof req.query.scope === 'string' ? req.query.scope : 'public';
+
+  const where: Prisma.ListingWhereInput = {
+    ...(includeSource && scope === 'all'
+      ? {}
+      : includeSource && scope === 'archived'
+        ? { isArchived: true }
+        : { isArchived: false }),
+    ...(search
+      ? {
+          OR: [
+            { title: { contains: search, mode: 'insensitive' } },
+            { slug: { contains: search, mode: 'insensitive' } }
+          ]
+        }
+      : {})
+  };
+
+  const orderBy =
+    req.query.sort === 'oldest'
+      ? [{ createdAt: 'asc' as const }, { id: 'asc' as const }]
+      : req.query.sort === 'price-asc'
+        ? [{ price: 'asc' as const }, { createdAt: 'desc' as const }]
+        : req.query.sort === 'price-desc'
+          ? [{ price: 'desc' as const }, { createdAt: 'desc' as const }]
+          : req.query.sort === 'title-asc'
+            ? [{ title: 'asc' as const }, { createdAt: 'desc' as const }]
+            : req.query.sort === 'title-desc'
+              ? [{ title: 'desc' as const }, { createdAt: 'desc' as const }]
+              : [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
+
+  const [listings, total] = await prisma.$transaction([
+    prisma.listing.findMany({
+      where,
+      include: getListingInclude(),
+      orderBy,
+      skip,
+      take: limit
+    }),
+    prisma.listing.count({ where })
+  ]);
+
+  const listingsWithSummaries = await attachReviewSummariesToListings(listings);
+
+  res.json({
+    items: listingsWithSummaries.map((listing) => serializeListing(listing, { includeSource })),
+    total,
+    nextCursor: buildNextCursor(page, limit, total)
   });
-  res.json(listings.map((listing) => serializeListing(listing, { includeSource })));
 };
 
 /**

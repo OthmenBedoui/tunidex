@@ -6,10 +6,12 @@ import OtpVerificationForm from '../../components/store-client/account/OtpVerifi
 import RegisterForm from '../../components/store-client/account/RegisterForm';
 import { AuthMode, StoreLoginPageProps } from '../../components/store-client/account/types';
 import { PublicAuthProvider, User } from '../../types';
+import { handleApiError } from '../../utils/apiError';
 
 const LoginPage: React.FC<StoreLoginPageProps> = ({
   onLoginSuccess,
   navigateTo,
+  onNotify,
   siteConfig,
   initialMode = 'login',
   audience = 'client',
@@ -60,8 +62,14 @@ const LoginPage: React.FC<StoreLoginPageProps> = ({
         const data = await api.verifyRegistrationOtp(email, otp) as { token: string; user: User };
         onLoginSuccess(data.token, data.user);
       }
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Erreur');
+    } catch (error) {
+      const message = handleApiError({
+        error,
+        fallbackMessage: 'Impossible de finaliser votre connexion.',
+        notify: onNotify,
+        logContext: 'Authentication submit failed'
+      });
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -73,8 +81,14 @@ const LoginPage: React.FC<StoreLoginPageProps> = ({
     try {
       const data = await api.resendRegistrationOtp(email);
       setSuccess(data.message);
-    } catch (resendError) {
-      setError(resendError instanceof Error ? resendError.message : 'Erreur');
+    } catch (error) {
+      const message = handleApiError({
+        error,
+        fallbackMessage: 'Impossible de renvoyer le code OTP.',
+        notify: onNotify,
+        logContext: 'OTP resend failed'
+      });
+      setError(message);
     } finally {
       setIsLoading(false);
     }

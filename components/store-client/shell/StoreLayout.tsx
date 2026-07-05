@@ -2,6 +2,7 @@ import React from 'react';
 import StoreFooter from './StoreFooter';
 import StoreHeader from './StoreHeader';
 import StoreNotificationModal from './StoreNotificationModal';
+import StoreWhatsAppFloatingButton from './StoreWhatsAppFloatingButton';
 import { StoreShellProps } from './types';
 
 const StoreLayout: React.FC<StoreShellProps> = ({
@@ -18,6 +19,7 @@ const StoreLayout: React.FC<StoreShellProps> = ({
 }) => (
   <div className="flex min-h-screen flex-col bg-slate-50 font-sans">
     <StoreNotificationModal notification={notification} onClose={onCloseNotification} />
+    <StoreWhatsAppFloatingButton siteConfig={siteConfig} />
     <StoreHeader
       user={user}
       cartCount={cartCount}

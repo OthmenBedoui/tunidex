@@ -1,6 +1,7 @@
 import swaggerJsdoc from 'swagger-jsdoc';
+import env from './env.js';
 
-const publicAppUrl = (process.env.AUTH_URL || 'http://localhost:3000').replace(/\/$/, '');
+const publicAppUrl = env.authUrl.replace(/\/$/, '');
 
 const options = {
   definition: {
@@ -41,7 +42,7 @@ const options = {
             id: { type: 'string', format: 'uuid' },
             username: { type: 'string' },
             email: { type: 'string', format: 'email' },
-            role: { type: 'string', enum: ['GUEST', 'CLIENT', 'SELLER', 'SUB_ADMIN', 'ADMIN', 'AGENT', 'USER'] },
+            role: { type: 'string', enum: ['GUEST', 'USER', 'AGENT', 'ADMIN'] },
             balance: { type: 'number' },
             avatarUrl: { type: 'string' },
             subscriptionTier: { type: 'string' },
@@ -126,6 +127,71 @@ const options = {
             status: { type: 'string' },
             createdAt: { type: 'string', format: 'date-time' },
           },
+        },
+        Notification: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            userId: { type: 'string', format: 'uuid' },
+            orderId: { type: 'string', format: 'uuid', nullable: true },
+            orderNumber: { type: 'string', nullable: true },
+            orderStatus: { type: 'string', nullable: true },
+            type: { type: 'string' },
+            title: { type: 'string' },
+            message: { type: 'string' },
+            metadata: { type: 'object', nullable: true, additionalProperties: true },
+            targetTab: { type: 'string', nullable: true },
+            audience: { type: 'string', enum: ['CLIENT', 'ADMIN'], nullable: true },
+            read: { type: 'boolean' },
+            readAt: { type: 'string', format: 'date-time', nullable: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        UploadAsset: {
+          type: 'object',
+          properties: {
+            url: { type: 'string' },
+            absoluteUrl: { type: 'string' },
+            relativePath: { type: 'string' },
+            contentType: { type: 'string', enum: ['image/webp'] },
+            width: { type: 'integer' },
+            height: { type: 'integer' },
+            size: { type: 'integer' }
+          }
+        },
+        PaginatedUsersResponse: {
+          type: 'object',
+          properties: {
+            items: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/User' }
+            },
+            total: { type: 'integer' },
+            nextCursor: { type: 'string', nullable: true }
+          }
+        },
+        PaginatedOrdersResponse: {
+          type: 'object',
+          properties: {
+            items: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Order' }
+            },
+            total: { type: 'integer' },
+            nextCursor: { type: 'string', nullable: true }
+          }
+        },
+        PaginatedListingsResponse: {
+          type: 'object',
+          properties: {
+            items: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Listing' }
+            },
+            total: { type: 'integer' },
+            nextCursor: { type: 'string', nullable: true }
+          }
         },
         SiteConfig: {
           type: 'object',

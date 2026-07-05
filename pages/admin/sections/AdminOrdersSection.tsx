@@ -1,7 +1,11 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import * as LucideIcons from 'lucide-react';
+import AdminTablePagination from '../../../components/admin/AdminTablePagination';
 import { AdminEmptyState } from '../../../components/admin/AdminWorkspace';
-import { Order, OrderStatus } from '../../../types';
+import { api } from '../../../services/api';
+import { useAdminOrdersPage } from '../../../src/hooks/useAdminOrdersPage';
+import { AdminOrderListSort, OrderStatus } from '../../../types';
+import { handleApiError } from '../../../utils/apiError';
 
 type DeliveryDraft = {
   orderItemId: string;
@@ -13,19 +17,12 @@ type DeliveryDraft = {
 };
 
 interface AdminOrdersSectionProps {
-  orders: Order[];
-  orderFilter: 'all' | OrderStatus;
-  orderSearch: string;
-  orderSort: 'newest' | 'oldest' | 'amount-desc' | 'amount-asc';
   expandedOrderId: string | null;
   deliveryDrafts: Record<string, DeliveryDraft>;
   setExpandedOrderId: (value: string | null) => void;
-  setOrderFilter: (value: 'all' | OrderStatus) => void;
-  setOrderSearch: (value: string) => void;
-  setOrderSort: (value: 'newest' | 'oldest' | 'amount-desc' | 'amount-asc') => void;
   setDeliveryDrafts: React.Dispatch<React.SetStateAction<Record<string, DeliveryDraft>>>;
   onUpdateStatus: (orderId: string, status: OrderStatus) => void;
-  onAdminOrderAction: (action: 'approvePayment' | 'rejectPayment' | 'createDelivery' | 'sendDelivery' | 'resendDelivery', orderId: string, payload?: any) => Promise<void>;
+  onAdminOrderAction: (action: 'approvePayment' | 'rejectPayment' | 'createDelivery' | 'sendDelivery' | 'resendDelivery', orderId: string, payload?: unknown) => Promise<void>;
   onResendOrderInvoiceEmail: (orderId: string) => Promise<void>;
   requestOrderStatusChange: (orderId: string, currentStatus: OrderStatus, nextStatus: OrderStatus) => void;
   onRequestRejectPayment: (orderId: string) => void;
@@ -40,20 +37,23 @@ const paymentLabels: Record<string, string> = {
   edinar: 'EDINAR',
   flouci: 'Flouci',
   click2pay: 'Click2Pay',
-  carte: 'Carte'
+  carte: 'Carte',
+  bank_transfer: 'Virement bancaire',
+  d17: 'D17',
+  flouci_manual: 'Flouci manuel'
+};
+
+const buildAdminWhatsappUrl = (phone: string | null | undefined, message: string) => {
+  const digits = (phone || '').replace(/\D/g, '');
+  return digits
+    ? `https://wa.me/${digits}?text=${encodeURIComponent(message)}`
+    : `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
 };
 
 const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
-  orders,
-  orderFilter,
-  orderSearch,
-  orderSort,
   expandedOrderId,
   deliveryDrafts,
   setExpandedOrderId,
-  setOrderFilter,
-  setOrderSearch,
-  setOrderSort,
   setDeliveryDrafts,
   onUpdateStatus,
   onAdminOrderAction,
@@ -65,37 +65,66 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
   ORDER_STATUS_LABELS,
   ORDER_STATUS_STEPS
 }) => {
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [orderFilter, setOrderFilter] = useState<'all' | OrderStatus>(OrderStatus.PAYMENT_UNDER_REVIEW);
+  const [orderSearch, setOrderSearch] = useState('');
+  const [orderSort, setOrderSort] = useState<AdminOrderListSort>('oldest');
+  const [invoiceLoadingId, setInvoiceLoadingId] = useState<string | null>(null);
+
+  const ordersQuery = useAdminOrdersPage({
+    page,
+    limit,
+    status: orderFilter,
+    q: orderSearch,
+    sort: orderSort
+  });
+
+  useEffect(() => {
+    if (ordersQuery.error) {
+      handleApiError({
+        error: ordersQuery.error,
+        fallbackMessage: 'Impossible de charger les commandes admin.',
+        logContext: 'Unable to load paginated admin orders'
+      });
+    }
+  }, [ordersQuery.error]);
+
+  const orders = ordersQuery.data?.items || [];
+  const totalOrders = ordersQuery.data?.total || 0;
   const isDeliveredStatus = (status: OrderStatus) => [OrderStatus.DELIVERED, OrderStatus.COMPLETED].includes(status);
   const isActiveStatus = (status: OrderStatus) => ![OrderStatus.DELIVERED, OrderStatus.COMPLETED, OrderStatus.CANCELLED].includes(status);
-  const normalizedSearch = orderSearch.trim().toLowerCase();
-  const filteredOrders = orders
-    .filter((order) => orderFilter === 'all' ? true : order.status === orderFilter)
-    .filter((order) => {
-      if (!normalizedSearch) return true;
-      return [
-        order.orderNumber,
-        order.invoice?.invoiceNumber,
-        order.buyerDisplayName,
-        order.customerFirstName,
-        order.customerLastName,
-        order.customerEmail,
-        order.customerPhone,
-        order.paymentMethod,
-        ...order.items.map((item) => item.titleSnapshot)
-      ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch);
-    })
-    .sort((a, b) => {
-      if (orderSort === 'oldest') return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-      if (orderSort === 'amount-desc') return b.amount - a.amount;
-      if (orderSort === 'amount-asc') return a.amount - b.amount;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
-
   const activeOrders = orders.filter((order) => isActiveStatus(order.status));
   const deliveredOrders = orders.filter((order) => isDeliveredStatus(order.status));
   const cancelledOrders = orders.filter((order) => order.status === OrderStatus.CANCELLED);
+  const reviewOrders = [...orders]
+    .filter((order) => [OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.PAYMENT_RECEIVED].includes(order.status))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   const revenue = orders.filter((order) => order.status !== OrderStatus.CANCELLED).reduce((sum, order) => sum + order.amount, 0);
   const pendingEmail = orders.filter((order) => order.emailStatus === 'FAILED' || order.emailStatus === 'PENDING').length;
+
+  const downloadInvoice = async (orderId: string, fallbackFileName?: string) => {
+    setInvoiceLoadingId(orderId);
+    try {
+      const blob = await api.downloadOrderInvoicePdf(orderId);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fallbackFileName || `invoice-${orderId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      handleApiError({
+        error,
+        fallbackMessage: 'Impossible de telecharger la facture.',
+        logContext: `Unable to download invoice for order ${orderId}`
+      });
+    } finally {
+      setInvoiceLoadingId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -129,11 +158,11 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
         {[
-          ['Total commandes', orders.length, 'Toutes les commandes'],
-          ['En cours', activeOrders.length, 'À traiter maintenant'],
-          ['Livrées', deliveredOrders.length, 'Terminées'],
-          ['Annulées', cancelledOrders.length, 'Stoppées'],
-          ['CA commandes', `${revenue.toFixed(2)} TND`, 'Hors annulation']
+          ['Total commandes', totalOrders, 'Correspond aux filtres actifs'],
+          ['En cours', activeOrders.length, 'Dans cette page'],
+          ['Livrées', deliveredOrders.length, 'Dans cette page'],
+          ['Annulées', cancelledOrders.length, 'Dans cette page'],
+          ['CA commandes', `${revenue.toFixed(2)} TND`, 'Dans cette page']
         ].map(([label, value, hint]) => (
           <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{label}</div>
@@ -149,20 +178,37 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
             <LucideIcons.Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
             <input
               value={orderSearch}
-              onChange={(e) => setOrderSearch(e.target.value)}
-              placeholder="Rechercher commande, client, téléphone, email, facture, produit..."
+              onChange={(e) => {
+                setOrderSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Rechercher par numero, email client ou titre produit..."
               className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm font-medium outline-none focus:border-indigo-500"
             />
           </div>
-          <select value={orderSort} onChange={(e) => setOrderSort(e.target.value as typeof orderSort)} className="h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 outline-none focus:border-indigo-500">
+          <select
+            value={orderSort}
+            onChange={(e) => {
+              setOrderSort(e.target.value as AdminOrderListSort);
+              setPage(1);
+            }}
+            className="h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 outline-none focus:border-indigo-500"
+          >
             <option value="newest">Plus récentes</option>
             <option value="oldest">Plus anciennes</option>
             <option value="amount-desc">Montant décroissant</option>
             <option value="amount-asc">Montant croissant</option>
           </select>
           <div className="flex flex-wrap gap-2">
-            {(['all', OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.PAYMENT_APPROVED, OrderStatus.IN_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED] as const).map((status) => (
-              <button key={status} onClick={() => setOrderFilter(status as 'all' | OrderStatus)} className={`h-10 rounded-xl px-4 text-xs font-black transition ${orderFilter === status ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+            {(['all', OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.PAYMENT_RECEIVED, OrderStatus.PAID, OrderStatus.DELIVERED, OrderStatus.CANCELLED] as const).map((status) => (
+              <button
+                key={status}
+                onClick={() => {
+                  setOrderFilter(status as 'all' | OrderStatus);
+                  setPage(1);
+                }}
+                className={`h-10 rounded-xl px-4 text-xs font-black transition ${orderFilter === status ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
                 {status === 'all' ? 'Tous' : ORDER_STATUS_LABELS[status]}
               </button>
             ))}
@@ -172,7 +218,12 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="space-y-4">
-          {filteredOrders.map((o) => {
+          {ordersQuery.isLoading && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm font-medium text-slate-500 shadow-sm">
+              Chargement des commandes...
+            </div>
+          )}
+          {orders.map((o) => {
             const currentStepIndex = getOrderStepIndex(o.status);
             const isExpanded = expandedOrderId === o.id;
             const customerName = o.buyerDisplayName || [o.customerFirstName, o.customerLastName].filter(Boolean).join(' ') || o.buyer?.username || 'Client';
@@ -190,7 +241,7 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
                         Email {o.emailStatus || 'PENDING'}
                       </span>
                       {payment && (
-                        <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${payment.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : payment.status === 'REJECTED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                        <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${['APPROVED', 'PAID'].includes(payment.status) ? 'bg-emerald-50 text-emerald-700' : payment.status === 'REJECTED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
                           Paiement {payment.status}
                         </span>
                       )}
@@ -215,8 +266,8 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
                     <div className="text-xs font-black uppercase tracking-widest text-slate-400">Paiement</div>
                     <div className="mt-2 font-black text-slate-900">{paymentLabels[(o.paymentMethod || '').toLowerCase()] || o.paymentMethod || 'À confirmer'}</div>
                     <div className="mt-1 text-xs text-slate-500">{o.invoice?.invoiceNumber ? `Facture ${o.invoice.invoiceNumber}` : 'Facture non liée'}</div>
-                    {payment?.customerReference && <div className="mt-1 break-all text-xs text-slate-500">Ref: {payment.customerReference}</div>}
-                    {payment?.proofFileUrl && <div className="mt-1 break-all text-xs font-semibold text-indigo-600">Preuve: {payment.proofFileUrl}</div>}
+                    {(payment?.reference || payment?.customerReference) && <div className="mt-1 break-all text-xs text-slate-500">Ref: {payment?.reference || payment?.customerReference}</div>}
+                    {(payment?.proofUrl || payment?.proofFileUrl) && <div className="mt-1 break-all text-xs font-semibold text-indigo-600">Preuve: {payment?.proofUrl || payment?.proofFileUrl}</div>}
                   </div>
                   <div className="space-y-3">
                     <div className="text-right">
@@ -227,7 +278,7 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
                       <button type="button" onClick={() => setExpandedOrderId(isExpanded ? null : o.id)} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
                         {isExpanded ? 'Fermer' : 'Détails'}
                       </button>
-                      {o.status === OrderStatus.PAYMENT_UNDER_REVIEW ? (
+                      {[OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.PAYMENT_RECEIVED].includes(o.status) ? (
                         <button type="button" onClick={() => onAdminOrderAction('approvePayment', o.id)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">
                           Approuver
                         </button>
@@ -334,7 +385,7 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
                         <div className="rounded-2xl border border-slate-200 bg-white p-4">
                           <div className="text-xs font-black uppercase tracking-widest text-slate-400">Actions administratives</div>
                           <select className={`mt-3 w-full rounded-xl px-4 py-3 text-xs font-bold uppercase border-none focus:ring-0 cursor-pointer ${getOrderStatusClasses(o.status)}`} value={o.status} onChange={(e) => requestOrderStatusChange(o.id, o.status, e.target.value as OrderStatus)}>
-                            {[OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.PAYMENT_APPROVED, OrderStatus.PAYMENT_REJECTED, OrderStatus.IN_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED].map(s => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
+                            {[OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.PAYMENT_RECEIVED, OrderStatus.PAID, OrderStatus.PAYMENT_REJECTED, OrderStatus.IN_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED].map((s) => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
                           </select>
                           <button type="button" onClick={() => onAdminOrderAction('approvePayment', o.id)} className="mt-3 flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white hover:bg-emerald-700">
                             Approuver paiement
@@ -348,11 +399,25 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
                           <button type="button" onClick={() => onResendOrderInvoiceEmail(o.id)} className="mt-3 flex w-full items-center justify-center rounded-xl bg-indigo-50 px-4 py-3 text-xs font-black text-indigo-700 hover:bg-indigo-100">
                             Renvoyer facture
                           </button>
-                          {o.customerPhone && (
-                            <a href={`https://wa.me/${o.customerPhone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="mt-3 flex w-full items-center justify-center rounded-xl bg-emerald-50 px-4 py-3 text-xs font-black text-emerald-700 hover:bg-emerald-100">
-                              WhatsApp client
-                            </a>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => downloadInvoice(o.id, `${o.invoice?.invoiceNumber || o.orderNumber}.pdf`)}
+                            disabled={invoiceLoadingId === o.id}
+                            className="mt-3 flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            {invoiceLoadingId === o.id ? 'Téléchargement...' : 'Télécharger la facture'}
+                          </button>
+                          <a
+                            href={buildAdminWhatsappUrl(
+                              o.customerPhone,
+                              `Commande ${o.orderNumber}: bonjour, nous vous contactons au sujet de votre paiement ${paymentLabels[(o.paymentMethod || '').toLowerCase()] || o.paymentMethod || 'manuel'}.`
+                            )}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-3 flex w-full items-center justify-center rounded-xl bg-emerald-50 px-4 py-3 text-xs font-black text-emerald-700 hover:bg-emerald-100"
+                          >
+                            WhatsApp client
+                          </a>
                         </div>
                         <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
                           <div className="text-xs font-black uppercase tracking-widest text-slate-400">Audit</div>
@@ -367,14 +432,42 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
               </div>
             );
           })}
-          {filteredOrders.length === 0 && (
+          {!ordersQuery.isLoading && orders.length === 0 && (
             <AdminEmptyState
               title="Aucune commande trouvée"
               description="Ajuste les filtres, la recherche ou la période pour retrouver une commande à traiter."
             />
           )}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <AdminTablePagination
+              page={page}
+              limit={limit}
+              total={totalOrders}
+              onPageChange={setPage}
+              onLimitChange={(nextLimit) => {
+                setLimit(nextLimit);
+                setPage(1);
+              }}
+            />
+          </div>
         </div>
         <aside className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-xs font-black uppercase tracking-widest text-slate-400">Paiements à vérifier</div>
+            <div className="mt-4 space-y-3">
+              {reviewOrders.slice(0, 5).map((order) => (
+                <button key={order.id} type="button" onClick={() => setExpandedOrderId(order.id)} className="w-full rounded-xl border border-amber-100 bg-amber-50 p-3 text-left hover:border-amber-200 hover:bg-amber-100">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs font-black text-amber-800">{order.orderNumber}</div>
+                    <div className="text-xs font-bold text-slate-500">{new Date(order.createdAt).toLocaleDateString('fr-FR')}</div>
+                  </div>
+                  <div className="mt-1 truncate text-sm font-bold text-slate-900">{order.buyerDisplayName || order.customerEmail || 'Client'}</div>
+                  <div className="text-xs text-slate-600">{order.amount.toFixed(2)} TND</div>
+                </button>
+              ))}
+              {reviewOrders.length === 0 && <div className="text-sm text-slate-400">Aucun paiement en attente de vérification.</div>}
+            </div>
+          </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="text-xs font-black uppercase tracking-widest text-slate-400">Priorités</div>
             <div className="mt-4 space-y-3">
@@ -393,7 +486,7 @@ const AdminOrdersSection: React.FC<AdminOrdersSectionProps> = ({
             <div className="mt-4 space-y-3 text-sm">
               <div className="flex justify-between"><span className="text-slate-500">Taux livraison</span><span className="font-black text-slate-900">{orders.length ? Math.round((deliveredOrders.length / orders.length) * 100) : 0}%</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Panier moyen</span><span className="font-black text-slate-900">{orders.length ? (revenue / orders.length).toFixed(2) : '0.00'} TND</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Emails échoués</span><span className="font-black text-slate-900">{orders.filter(order => order.emailStatus === 'FAILED').length}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Emails échoués</span><span className="font-black text-slate-900">{orders.filter((order) => order.emailStatus === 'FAILED').length}</span></div>
             </div>
           </div>
         </aside>

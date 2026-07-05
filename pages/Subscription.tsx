@@ -3,12 +3,14 @@ import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Crown, CreditC
 import { SubscriptionTier, User as UserType, UserRole } from '../types';
 import { api } from '../services/api';
 import SocialAuthButtons from '../components/shared/SocialAuthButtons';
+import { handleApiError } from '../utils/apiError';
 
 interface SubscriptionProps {
   user: UserType;
   onSubscribe: (tier: SubscriptionTier) => void;
   navigateTo: (page: string) => void;
   onRequireLogin: () => void;
+  onNotify: (message: string, type?: 'success' | 'error') => void;
 }
 
 type Plan = {
@@ -28,7 +30,7 @@ const paymentMethods = [
   { id: 'CARTE', label: 'Carte' }
 ];
 
-const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigateTo, onRequireLogin }) => {
+const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigateTo, onRequireLogin, onNotify }) => {
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionTier | null>(null);
   const [step, setStep] = useState(1);
   const [popup, setPopup] = useState<{ type: 'success' | 'error'; title: string; message: string } | null>(null);
@@ -112,7 +114,13 @@ const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigate
 
       setGuestAuthMessage({ type: 'success', text: result.message });
     } catch (error) {
-      setGuestAuthMessage({ type: 'error', text: error instanceof Error ? error.message : "Impossible d'envoyer le formulaire." });
+      const text = handleApiError({
+        error,
+        fallbackMessage: "Impossible d'envoyer le formulaire.",
+        notify: onNotify,
+        logContext: 'Guest subscription auth failed'
+      });
+      setGuestAuthMessage({ type: 'error', text });
     } finally {
       setGuestAuthLoading(false);
     }
@@ -134,11 +142,17 @@ const Subscription: React.FC<SubscriptionProps> = ({ user, onSubscribe, navigate
       });
       onSubscribe(selectedPlan);
       window.setTimeout(() => navigateTo('home'), 1500);
-    } catch {
+    } catch (error) {
+      const message = handleApiError({
+        error,
+        fallbackMessage: "Erreur lors de l'abonnement.",
+        notify: onNotify,
+        logContext: 'Subscription checkout failed'
+      });
       setPopup({
         type: 'error',
         title: 'Abonnement impossible',
-        message: "Erreur lors de l'abonnement."
+        message
       });
     }
   };

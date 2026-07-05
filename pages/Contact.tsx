@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowRight, Building2, Headphones, Mail, MapPin, MessageCircle, Phone, Send, ShieldCheck, Sparkles } from 'lucide-react';
 import { SiteConfig } from '../types';
+import { buildStoreWhatsappUrl, getStoreWhatsappNumber } from '../utils/whatsapp';
 
 interface ContactProps {
   siteConfig: SiteConfig;
@@ -20,10 +21,10 @@ const Contact: React.FC<ContactProps> = ({ siteConfig, navigateTo }) => {
   const [message, setMessage] = useState('');
   const supportEmail = siteConfig.footerEmail || 'support@tunibots.tn';
   const supportPhone = siteConfig.footerPhone || '+216 00 000 000';
-  const whatsappNumber = siteConfig.footerWhatsapp || supportPhone;
+  const whatsappNumber = getStoreWhatsappNumber(siteConfig) || supportPhone;
   const address = siteConfig.footerAddress || 'Tunis, Tunisie';
   const brandName = siteConfig.siteName || 'TuniBots';
-  const whatsappLink = `https://wa.me/${whatsappNumber.replace(/\D/g, '')}`;
+  const whatsappLink = buildStoreWhatsappUrl(siteConfig, 'Bonjour TuniBots, j ai besoin d aide.');
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -51,10 +52,12 @@ const Contact: React.FC<ContactProps> = ({ siteConfig, navigateTo }) => {
               Question sur une facture, une activation, un pack ou une commande en cours? L’équipe {brandName} vous accompagne depuis Tunis avec un suivi clair et rapide.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <a href={whatsappLink} target="_blank" rel="noreferrer" className="theme-btn inline-flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-black shadow-xl">
-                WhatsApp
-                <MessageCircle size={18} />
-              </a>
+              {whatsappLink && (
+                <a href={whatsappLink} target="_blank" rel="noreferrer" className="theme-btn inline-flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-black shadow-xl">
+                  WhatsApp
+                  <MessageCircle size={18} />
+                </a>
+              )}
               <button onClick={() => navigateTo('home')} className="rounded-xl border border-white/20 bg-white/10 px-5 py-3 text-sm font-black text-white backdrop-blur hover:bg-white/15">
                 Retour boutique
               </button>

@@ -22,6 +22,7 @@ import { api } from '../services/api';
 import { AuthProviderConfig, AuthProviderField, AuthProviderKey } from '../types';
 import { AdminErrorState, AdminPremiumLoader } from '../components/admin/AdminSurfaceState';
 import { AdminPanelCard, AdminStickyActionBar } from '../components/admin/AdminWorkspace';
+import { handleApiError } from '../utils/apiError';
 
 interface RegisterAuthenticationAdminProps {
   navigateTo: (page: string, slug?: string) => void;
@@ -151,9 +152,13 @@ const RegisterAuthenticationAdmin: React.FC<RegisterAuthenticationAdminProps> = 
         setSelectedProvider(data[0].key);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to load authentication providers.';
+      const message = handleApiError({
+        error,
+        fallbackMessage: 'Impossible de charger les fournisseurs d authentification.',
+        notify: onNotify,
+        logContext: 'Unable to load auth providers'
+      });
       setLoadError(message);
-      onNotify(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -208,7 +213,12 @@ const RegisterAuthenticationAdmin: React.FC<RegisterAuthenticationAdminProps> = 
       setDrafts(buildDrafts(nextProviders));
       onNotify(`${updated.name} saved successfully.`);
     } catch (error) {
-      onNotify(error instanceof Error ? error.message : 'Unable to save provider.', 'error');
+      handleApiError({
+        error,
+        fallbackMessage: 'Impossible de sauvegarder ce provider.',
+        notify: onNotify,
+        logContext: `Unable to save provider ${provider.key}`
+      });
     } finally {
       setSavingProvider(null);
     }
@@ -226,7 +236,12 @@ const RegisterAuthenticationAdmin: React.FC<RegisterAuthenticationAdminProps> = 
       setDrafts(buildDrafts(nextProviders));
       onNotify(`${field.label} cleared for ${provider.name}.`);
     } catch (error) {
-      onNotify(error instanceof Error ? error.message : 'Unable to clear the credential.', 'error');
+      handleApiError({
+        error,
+        fallbackMessage: 'Impossible d effacer cet identifiant.',
+        notify: onNotify,
+        logContext: `Unable to clear provider field ${field.envName}`
+      });
     } finally {
       setSavingProvider(null);
     }

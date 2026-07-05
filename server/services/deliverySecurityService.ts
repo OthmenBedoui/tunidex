@@ -1,10 +1,10 @@
 import crypto from 'crypto';
+import env from '../config/env.js';
 
 const ALGORITHM = 'aes-256-gcm';
 
 const getKey = () => {
-  const configured = process.env.DELIVERY_ENCRYPTION_KEY || process.env.JWT_SECRET || 'tunibots-local-delivery-key';
-  return crypto.createHash('sha256').update(configured).digest();
+  return crypto.createHash('sha256').update(env.deliveryEncryptionKey).digest();
 };
 
 export const encryptDeliveryContent = (content: string) => {

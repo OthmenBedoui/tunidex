@@ -1,439 +1,148 @@
 # TuniBots
 
-Guide d'installation du projet en local et sur serveur.
+Marketplace React + Vite avec backend Express 5, Prisma 5 et PostgreSQL, deploye localement sans conteneur.
 
-## 1. Prérequis
+## Prerequis
 
-Avant de commencer, installe :
-
-- `Node.js` 20+ recommandé
+- `Node.js` 20+
 - `npm`
-- `PostgreSQL` 14+ recommandé
-- `Git`
+- `PostgreSQL` 14+
 
-Vérifie les versions :
+## Setup local
 
-```bash
-node -v
-npm -v
-```
-
-## 2. Cloner le projet
+### 1. Installer
 
 ```bash
-git clone <URL_DU_REPO>
-cd TuniBots
-```
-
-## 3. Installer les dépendances
-
-```bash
+git clone <repo-url>
+cd tunibots
 npm install
+cp .env.example .env
 ```
 
-## 4. Configurer les variables d'environnement
+### 2. Configurer l'environnement
 
-Le projet utilise le fichier [`.env`](c:\Users\Othme\OneDrive\Documents\TuniBots\.env).
+Variables minimales a renseigner dans `.env` :
 
-Exemple minimal :
+- `DATABASE_URL`
+- `JWT_SECRET` avec au moins 32 caracteres
+- `AUTH_SECRET` avec au moins 32 caracteres
+- `AUTH_URL`
+- `ALLOWED_ORIGINS`
 
-```env
-NODE_ENV=development
-JWT_SECRET="tunidev"
-API_KEY="votre_cle_gemini_api"
-DATABASE_URL="postgresql://postgres:0507@localhost:5432/tunibots"
-WHATSAPP_BOT_WEBHOOK_URL=""
-WHATSAPP_BOT_WEBHOOK_TOKEN=""
-```
+Le fichier [`.env.example`](.env.example) documente aussi OAuth, SMTP, WhatsApp et la base de test `DATABASE_URL_TEST`.
+Il documente aussi `UPLOADS_DIR`, utilise pour stocker les images optimisees servies sous `/uploads/...`.
+Il documente aussi `SENTRY_DSN` et `LOG_LEVEL` pour l'observabilite.
 
-Notes :
+### 3. Preparer PostgreSQL
 
-- `DATABASE_URL` doit pointer vers ta base PostgreSQL.
-- `API_KEY` est utilisée pour les fonctionnalités IA.
-- `JWT_SECRET` est utilisée pour l'authentification.
-- `WHATSAPP_BOT_WEBHOOK_URL` permet au bot WhatsApp de recevoir les demandes de message de bienvenue.
-- `WHATSAPP_BOT_WEBHOOK_TOKEN` est optionnel et sera envoyé en Bearer token au webhook.
-
-## 5. Préparer PostgreSQL en local
-
-Créer la base si elle n'existe pas encore :
+Exemple local :
 
 ```sql
 CREATE DATABASE tunibots;
+CREATE DATABASE tunibots_test;
 ```
 
-Paramètres actuellement attendus :
+Exemple d'URLs :
 
-- Base : `tunibots`
-- User : `postgres`
-- Mot de passe : `0507`
-- Host : `localhost`
-- Port : `5432`
-
-## 6. Générer Prisma Client
-
-```bash
-npx prisma generate --schema server/schema.prisma
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tunibots
+DATABASE_URL_TEST=postgresql://postgres:postgres@localhost:5432/tunibots_test
 ```
 
-## 7. Exécuter les migrations Prisma
-
-Si la migration existe déjà dans le projet :
+### 4. Prisma
 
 ```bash
 npx prisma migrate deploy --schema server/schema.prisma
+npx prisma generate --schema server/schema.prisma
 ```
 
-Si tu crées une nouvelle migration en développement :
+Seed de dev explicite :
 
 ```bash
-npx prisma migrate dev --schema server/schema.prisma --name nom_de_la_migration
+npm run db:seed
 ```
 
-## 8. Lancer le projet en local
-
-Le projet démarre le backend Express et monte Vite en middleware en mode développement.
+### 5. Lancer l'application
 
 ```bash
 npm run dev
 ```
 
-Application :
+URLs utiles :
 
-- Site : `http://localhost:3000`
+- App : `http://localhost:3000`
 - Swagger : `http://localhost:3000/api-docs`
+- Health : `http://localhost:3000/health`
 
-## 9. Seed initial de la base
+## Tests
 
-Au démarrage, le projet exécute automatiquement le seeding via `server/utils/seeder.ts`.
-
-Cela crée notamment :
-
-- les comptes admin/agent par défaut
-- les catégories
-- les sous-catégories
-
-Si tu veux simplement relancer le seed manuellement :
+La suite d'integration utilise `Vitest` + `Supertest` contre l'app Express reelle.
 
 ```bash
-npx tsx -e "import { seedDatabase } from './server/utils/seeder.ts'; await seedDatabase();"
+npm test
 ```
 
-## 10. Vérifier Prisma
-
-Validation du schéma :
-
-```bash
-npx prisma validate --schema server/schema.prisma
-```
-
-Voir l'état des migrations :
-
-```bash
-npx prisma migrate status --schema server/schema.prisma
-```
-
-Ouvrir Prisma Studio :
-
-```bash
-npx prisma studio --schema server/schema.prisma
-```
-
-## 11. Build pour production
-
-Créer le build frontend :
-
-```bash
-npm run build
-```
-
-Important :
-
-- le build Vite génère le frontend dans `dist/`
-- en production, le serveur Express sert `dist/`
-- le démarrage serveur se fait avec `NODE_ENV=production`
-
-## 12. Lancer en mode production
-
-### Option simple
-
-Après build :
-
-```bash
-$env:NODE_ENV="production"
-npx tsx server/index.ts
-```
-
-Sous Linux :
-
-```bash
-NODE_ENV=production npx tsx server/index.ts
-```
-
-## 13. Déploiement sur serveur VPS
-
-Exemple de procédure :
-
-### Étape 1. Installer les dépendances système
-
-Sur Ubuntu/Debian :
-
-```bash
-sudo apt update
-sudo apt install -y git curl build-essential
-```
-
-Installer Node.js :
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-```
-
-Installer PostgreSQL :
-
-```bash
-sudo apt install -y postgresql postgresql-contrib
-```
-
-### Étape 2. Créer la base PostgreSQL
-
-```bash
-sudo -u postgres psql
-```
-
-Puis :
-
-```sql
-CREATE DATABASE tunibots;
-CREATE USER tunibots_user WITH ENCRYPTED PASSWORD 'mot_de_passe_solide';
-GRANT ALL PRIVILEGES ON DATABASE tunibots TO tunibots_user;
-```
-
-### Étape 3. Cloner et installer le projet
-
-```bash
-git clone <URL_DU_REPO>
-cd TuniBots
-npm install
-```
-
-### Étape 4. Configurer `.env`
-
-Exemple serveur :
-
-```env
-NODE_ENV=production
-JWT_SECRET="change_ce_secret"
-API_KEY="votre_cle_gemini_api"
-DATABASE_URL="postgresql://tunibots_user:mot_de_passe_solide@localhost:5432/tunibots"
-```
-
-### Étape 5. Exécuter Prisma
-
-```bash
-npx prisma generate --schema server/schema.prisma
-npx prisma migrate deploy --schema server/schema.prisma
-```
-
-### Étape 6. Builder l'application
-
-```bash
-npm run build
-```
-
-### Étape 7. Démarrer l'application
-
-```bash
-NODE_ENV=production npx tsx server/index.ts
-```
-
-## 14. Lancer avec PM2 sur serveur
-
-Installer PM2 :
-
-```bash
-npm install -g pm2
-```
-
-Démarrer TuniBots :
-
-```bash
-pm2 start "npx tsx server/index.ts" --name tunibots --env production
-```
-
-Ou :
-
-```bash
-pm2 start server/index.ts --name tunibots --interpreter npx --interpreter-args tsx
-```
-
-Sauvegarder :
-
-```bash
-pm2 save
-pm2 startup
-```
-
-Logs :
-
-```bash
-pm2 logs tunibots
-```
-
-## 15. Reverse proxy Nginx
-
-Exemple de config :
-
-```nginx
-server {
-    listen 80;
-    server_name votre-domaine.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
-
-Puis :
-
-```bash
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-## 16. SSL avec Let's Encrypt
-
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d votre-domaine.com
-```
-
-## 17. Commandes utiles
-
-Installer les dépendances :
-
-```bash
-npm install
-```
-
-Démarrer en développement :
-
-```bash
-npm run dev
-```
-
-Build frontend :
-
-```bash
-npm run build
-```
-
-Générer Prisma Client :
-
-```bash
-npx prisma generate --schema server/schema.prisma
-```
-
-Appliquer les migrations :
-
-```bash
-npx prisma migrate deploy --schema server/schema.prisma
-```
-
-Créer une migration en dev :
-
-```bash
-npx prisma migrate dev --schema server/schema.prisma --name nouvelle_migration
-```
-
-Ouvrir Prisma Studio :
-
-```bash
-npx prisma studio --schema server/schema.prisma
-```
-
-## 18. Structure utile du projet
+Scripts utiles :
+
+- `npm run test:watch`
+- `npm run test:db:reset`
+- `npm run test:db:generate`
+- `npm run test:seed:orders -- 10000`
+- `npm run images:audit`
+- `npm run images:migrate`
+
+Les suites remettent la base de test a zero avec `prisma migrate reset --force --skip-seed --schema server/schema.prisma`.
+
+## Scripts principaux
+
+- `npm run dev` : backend Express + Vite middleware en dev
+- `npm run build` : `tsc` + build Vite
+- `npm run lint` : ESLint front + back
+- `npm test` : integration tests Vitest
+- `npm run db:seed` : seed explicite
+- `npm run db:migrate` : `prisma migrate deploy`
+- `npm run db:generate` : `prisma generate`
+- `npm run images:audit` : compte les `data:image/...` encore presents en base
+- `npm run images:migrate` : extrait les images inline vers `UPLOADS_DIR` puis remplace par des URLs
+
+## Structure reelle
 
 ```text
-TuniBots/
-├── components/
-├── pages/
-├── services/
-├── utils/
+.
+├── components/          # UI shared + store + admin
+├── deploy/
+│   ├── backup/          # backup.sh, restore.sh, cron
+│   └── nginx/
+├── docs/                # checkpoint, notes, archives
+├── pages/               # pages legacy/store/admin/account
 ├── server/
+│   ├── config/
 │   ├── controllers/
+│   ├── middleware/
+│   ├── migrations/
 │   ├── routes/
 │   ├── services/
 │   ├── utils/
-│   ├── migrations/
-│   ├── prisma.ts
-│   ├── schema.prisma
-│   └── index.ts
-├── .env
-├── package.json
-└── README.md
+│   └── validation/
+├── src/
+│   ├── components/
+│   ├── contexts/
+│   ├── hooks/
+│   └── queryClient.ts
+└── tests/
+    ├── helpers/
+    ├── integration/
+    └── setup/
 ```
 
-## 19. Dépannage
+## Notes utiles
 
-### Prisma ne se connecte pas
-
-Vérifie :
-
-- PostgreSQL est démarré
-- `DATABASE_URL` est correcte
-- la base `tunibots` existe
-- l'utilisateur PostgreSQL a les droits
-
-### Les tables ne sont pas créées
-
-Relance :
-
-```bash
-npx prisma generate --schema server/schema.prisma
-npx prisma migrate deploy --schema server/schema.prisma
-```
-
-### Le site ne s'affiche pas en production
-
-Vérifie :
-
-- `npm run build` a bien généré `dist/`
-- `NODE_ENV=production` est bien défini
-- le port `3000` est ouvert ou reverse-proxyé par Nginx
-
-### Le serveur ne démarre pas
-
-Vérifie :
-
-- les variables `.env`
-- PostgreSQL
-- les logs PM2 ou la sortie console
-
-## 20. Résumé rapide
-
-Installation locale :
-
-```bash
-npm install
-npx prisma generate --schema server/schema.prisma
-npx prisma migrate deploy --schema server/schema.prisma
-npm run dev
-```
-
-Installation serveur :
-
-```bash
-npm install
-npx prisma generate --schema server/schema.prisma
-npx prisma migrate deploy --schema server/schema.prisma
-npm run build
-NODE_ENV=production npx tsx server/index.ts
-```
+- Le serveur ne seed pas automatiquement au demarrage. Le seed passe uniquement par `npm run db:seed`.
+- Les comptes `DEFAULT_ADMIN_*` et `DEFAULT_AGENT_*` ne sont seeds qu'en developpement.
+- Les notifications client/admin passent par l'API `/api/notifications*` et par React Query cote front.
+- Les sauvegardes shell et restauration sont dans [`deploy/backup/`](deploy/backup).
+- En production, Express sert `dist/` quand `NODE_ENV=production`.
+- Les uploads images admin passent par `POST /api/uploads`, sont convertis en `webp` et exposes publiquement sous `/uploads/...`.
+- L'audit detaille du stockage historique des images est dans [`docs/IMAGE_STORAGE_AUDIT.md`](docs/IMAGE_STORAGE_AUDIT.md).
+- Si `SENTRY_DSN` est defini, Sentry est active cote backend et frontend.
+- Le endpoint `/health` verifie Prisma avec `SELECT 1` et peut servir de probe pour Nginx ou systemd.

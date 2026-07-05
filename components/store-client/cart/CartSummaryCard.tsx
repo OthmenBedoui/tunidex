@@ -1,13 +1,15 @@
 import React from 'react';
 import { ArrowRight, Wallet } from 'lucide-react';
 import { User } from '../../../types';
-import { GuestFormState } from './types';
+import { CouponCheckoutState, GuestFormState, LoyaltyCheckoutState } from './types';
 
 interface CartSummaryCardProps {
   total: number;
   isGuest: boolean;
   user: User;
   guestForm: GuestFormState;
+  loyaltyState?: LoyaltyCheckoutState;
+  couponState?: CouponCheckoutState;
   isCheckingOut: boolean;
   formError: string;
   onOpenPayment: () => void;
@@ -18,6 +20,8 @@ const CartSummaryCard: React.FC<CartSummaryCardProps> = ({
   isGuest,
   user,
   guestForm,
+  loyaltyState,
+  couponState,
   isCheckingOut,
   formError,
   onOpenPayment
@@ -45,10 +49,22 @@ const CartSummaryCard: React.FC<CartSummaryCardProps> = ({
         <span>Sous-total</span>
         <span className="font-medium">{total.toFixed(2)} TND</span>
       </div>
+      {(couponState?.validation?.discountAmount || 0) > 0 && (
+        <div className="flex justify-between text-indigo-700">
+          <span>Code promo {couponState?.validation?.code}</span>
+          <span className="font-bold">- {couponState?.validation?.discountAmount.toFixed(2)} TND</span>
+        </div>
+      )}
+      {loyaltyState?.useLoyaltyPoints && loyaltyState.estimatedDiscount > 0 && (
+        <div className="flex justify-between text-emerald-700">
+          <span>Reduction fidelite</span>
+          <span className="font-bold">- {loyaltyState.estimatedDiscount.toFixed(2)} TND</span>
+        </div>
+      )}
       <div className="flex justify-between border-t border-dashed pt-4 text-2xl font-black text-slate-900">
         <span>Total</span>
         <span>
-          {total.toFixed(2)} <span className="text-sm font-normal text-slate-400">TND</span>
+          {(total - (couponState?.validation?.discountAmount || 0) - (loyaltyState?.useLoyaltyPoints ? loyaltyState.estimatedDiscount : 0)).toFixed(2)} <span className="text-sm font-normal text-slate-400">TND</span>
         </span>
       </div>
     </div>

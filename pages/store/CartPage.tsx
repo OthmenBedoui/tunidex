@@ -1,58 +1,42 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { ShoppingBag } from 'lucide-react';
 import CartItemsList from '../../components/store-client/cart/CartItemsList';
 import CartSummaryCard from '../../components/store-client/cart/CartSummaryCard';
 import CheckoutPaymentForm from '../../components/store-client/cart/CheckoutPaymentForm';
 import CheckoutSuccessPanel from '../../components/store-client/cart/CheckoutSuccessPanel';
-import { CheckoutSuccessState, GuestFormState, PaymentProofState, StoreCartPageProps } from '../../components/store-client/cart/types';
+import { CheckoutSuccessState, GuestFormState, StoreCartPageProps } from '../../components/store-client/cart/types';
 import { api } from '../../services/api';
-import { Order, OrderStatus } from '../../types';
+import { useMyLoyalty } from '../../src/hooks/useMyLoyalty';
+import { useCart } from '../../src/hooks/useCart';
+import { queryKeys } from '../../src/queryKeys';
+import { CouponValidationResult, Order, OrderStatus } from '../../types';
+import { handleApiError } from '../../utils/apiError';
 import { clearGuestCart, getGuestCartCount, getGuestCartItems, removeGuestCartLine } from '../../utils/guestCart';
 import { getListingFinalPrice } from '../../utils/pricing';
-
-const PAYMENT_INSTRUCTIONS: Record<string, string> = {
-  whatsapp: 'Envoyez votre paiement ou capture au support WhatsApp avec le numero de commande. Un agent validera manuellement.',
-  edinar: 'Payez via EDINAR, puis ajoutez la reference de transaction et une capture si disponible.',
-  flouci: 'Payez via Flouci, puis ajoutez la reference Flouci et une capture si disponible.',
-  bank_transfer: 'Effectuez le virement puis ajoutez la reference bancaire et le recu.',
-  cash: 'Choisissez cette option si un agent doit confirmer un paiement cash.'
-};
-
-const fileToProofPayload = (file: File) =>
-  new Promise<PaymentProofState>((resolve, reject) => {
-    if (file.size > 5 * 1024 * 1024) {
-      reject(new Error('La preuve de paiement ne doit pas depasser 5 Mo.'));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () =>
-      resolve({
-        fileName: file.name,
-        mimeType: file.type,
-        size: file.size,
-        dataUrl: String(reader.result || '')
-      });
-    reader.onerror = () => reject(new Error('Impossible de lire le fichier de preuve.'));
-    reader.readAsDataURL(file);
-  });
 
 const ACTIVE_ORDER_STATUSES = [
   OrderStatus.PENDING_PAYMENT,
   OrderStatus.PAYMENT_UNDER_REVIEW,
   OrderStatus.PAYMENT_APPROVED,
+  OrderStatus.PAID,
   OrderStatus.IN_DELIVERY,
   OrderStatus.IN_PROGRESS,
   OrderStatus.PAYMENT_RECEIVED
 ];
 
-const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, siteConfig, listings, user, orders, onOrderCreated }) => {
+const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, onNotify, siteConfig, listings, user, orders, onOrderCreated }) => {
   const [items, setItems] = useState<ReturnType<typeof getGuestCartItems>>([]);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('whatsapp');
-  const [paymentReference, setPaymentReference] = useState('');
-  const [paymentProof, setPaymentProof] = useState<PaymentProofState>(null);
+  const [paymentMethod, setPaymentMethod] = useState(siteConfig.paymentMethods?.find((method) => method.isActive)?.id || 'bank_transfer');
+  const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
+  const [couponCode, setCouponCode] = useState('');
+  const [couponValidation, setCouponValidation] = useState<CouponValidationResult | null>(null);
+  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
   const [formError, setFormError] = useState('');
+  const isGuest = user.id === 'guest';
+  const loyaltyQuery = useMyLoyalty(!isGuest && user.role === 'USER');
   const [guestForm, setGuestForm] = useState<GuestFormState>({
     firstName: user.fullName?.split(' ')[0] || '',
     lastName: user.fullName?.split(' ').slice(1).join(' ') || '',
@@ -60,8 +44,8 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
     phone: user.phone || ''
   });
   const [checkoutSuccess, setCheckoutSuccess] = useState<CheckoutSuccessState | null>(null);
-
-  const isGuest = user.id === 'guest';
+  const queryClient = useQueryClient();
+  const cartQuery = useCart(!isGuest);
   const latestActiveOrder = !isGuest
     ? [...orders]
         .filter((order) => ACTIVE_ORDER_STATUSES.includes(order.status))
@@ -75,10 +59,9 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
   };
 
   useEffect(() => {
-    if (siteConfig.click2payEnabled) {
-      setPaymentMethod('click2pay');
-    }
-  }, [siteConfig.click2payEnabled]);
+    const defaultMethod = siteConfig.paymentMethods?.find((method) => method.isActive)?.id;
+    if (defaultMethod) setPaymentMethod(defaultMethod);
+  }, [siteConfig.paymentMethods]);
 
   useEffect(() => {
     if (isGuest) {
@@ -86,19 +69,50 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
       return;
     }
 
-    api
-      .getCart()
-      .then((data) => {
-        setItems(data);
-        onCartUpdate(data.reduce((acc, item) => acc + item.quantity, 0));
-      })
-      .catch(console.error);
-  }, [isGuest, listings]);
+    if (cartQuery.data) {
+      setItems(cartQuery.data);
+      onCartUpdate(cartQuery.data.reduce((acc, item) => acc + item.quantity, 0));
+    }
+  }, [cartQuery.data, isGuest, listings, onCartUpdate]);
 
   const total = useMemo(
     () => items.reduce((sum, item) => sum + ((item.variant?.price ?? getListingFinalPrice(item.listing)) * item.quantity), 0),
     [items]
   );
+  const estimatedLoyaltyDiscount = useMemo(() => {
+    const loyalty = loyaltyQuery.data;
+    const couponAdjustedTotal = Math.max(0, total - (couponValidation?.discountAmount || 0));
+    if (!useLoyaltyPoints || !loyalty || couponAdjustedTotal <= 0) return 0;
+    const maxDiscount = (couponAdjustedTotal * (loyalty.maxDiscountPercent || 0)) / 100;
+    return Math.round(Math.min(maxDiscount, loyalty.redeemableAmount) * 100) / 100;
+  }, [couponValidation?.discountAmount, loyaltyQuery.data, total, useLoyaltyPoints]);
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) {
+      setCouponValidation(null);
+      setFormError('');
+      return;
+    }
+
+    setIsApplyingCoupon(true);
+    try {
+      const result = await api.validateCheckoutCoupon(couponCode.trim(), total);
+      setCouponValidation(result);
+      setFormError('');
+      onNotify(result.message || 'Code promo applique.', 'success');
+    } catch (error) {
+      setCouponValidation(null);
+      const message = handleApiError({
+        error,
+        fallbackMessage: 'Code promo invalide.',
+        notify: onNotify,
+        logContext: 'Unable to validate coupon'
+      });
+      setFormError(message);
+    } finally {
+      setIsApplyingCoupon(false);
+    }
+  };
 
   const handleRemove = async (item: (typeof items)[number]) => {
     if (isGuest) {
@@ -114,8 +128,18 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
 
     try {
       await api.removeFromCart(item.id);
-    } catch {
-      // UI-first behavior retained.
+    } catch (error) {
+      handleApiError({
+        error,
+        fallbackMessage: 'Impossible de retirer cet article du panier.',
+        notify: onNotify,
+        rollback: () => {
+          setItems(items);
+          onCartUpdate(items.reduce((acc, currentItem) => acc + currentItem.quantity, 0));
+        },
+        logContext: 'Unable to remove cart item'
+      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.cart });
     }
   };
 
@@ -124,19 +148,9 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
     if (formError) setFormError('');
   };
 
-  const handlePaymentProofChange = async (file: File | null) => {
-    if (!file) {
-      setPaymentProof(null);
-      return;
-    }
-
-    try {
-      setPaymentProof(await fileToProofPayload(file));
-      setFormError('');
-    } catch (error) {
-      setPaymentProof(null);
-      setFormError(error instanceof Error ? error.message : 'Fichier invalide.');
-    }
+  const handleCouponCodeChange = (value: string) => {
+    setCouponCode(value.toUpperCase());
+    setCouponValidation((current) => (current?.code === value.toUpperCase().trim() ? current : null));
   };
 
   const handleCheckout = async () => {
@@ -155,8 +169,8 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
           ? {
               ...guestForm,
               paymentMethod,
-              customerReference: paymentReference,
-              paymentProof,
+              useLoyaltyPoints,
+              couponCode: couponCode.trim() || undefined,
               items: items.map((item) => ({
                 listingId: item.listingId,
                 variantId: item.variantId,
@@ -165,37 +179,57 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
             }
           : {
               paymentMethod,
-              phone: guestForm.phone || user.phone || '',
-              customerReference: paymentReference,
-              paymentProof
+              useLoyaltyPoints,
+              couponCode: couponCode.trim() || undefined,
+              phone: guestForm.phone || user.phone || ''
             },
         idempotencyKey
       );
 
       if (isGuest) {
         clearGuestCart();
+      } else {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.cart });
       }
 
       setItems([]);
+      setUseLoyaltyPoints(false);
+      setCouponCode('');
+      setCouponValidation(null);
       onCartUpdate(0);
       onOrderCreated(order);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.loyalty.my });
       setCheckoutSuccess({
-        orderNumber: order.orderNumber,
-        invoiceNumber: order.invoice?.invoiceNumber,
-        emailStatus: order.emailStatus,
-        status: order.status,
-        trackingToken: order.trackingToken
+        order
       });
       setShowPaymentForm(false);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Impossible d enregistrer votre commande.');
+      const message = handleApiError({
+        error,
+        fallbackMessage: 'Impossible d enregistrer votre commande.',
+        notify: onNotify,
+        logContext: 'Unable to confirm checkout'
+      });
+      setFormError(message);
     } finally {
       setIsCheckingOut(false);
     }
   };
 
   if (checkoutSuccess) {
-    return <CheckoutSuccessPanel checkoutSuccess={checkoutSuccess} isGuest={isGuest} navigateTo={navigateTo} />;
+    return (
+      <CheckoutSuccessPanel
+        checkoutSuccess={checkoutSuccess}
+        isGuest={isGuest}
+        navigateTo={navigateTo}
+        siteConfig={siteConfig}
+        onNotify={onNotify}
+        onOrderUpdated={(updatedOrder) => {
+          setCheckoutSuccess({ order: updatedOrder });
+          onOrderCreated(updatedOrder);
+        }}
+      />
+    );
   }
 
   if (items.length === 0 && latestActiveOrder) {
@@ -260,17 +294,17 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
         user={user}
         total={total}
         paymentMethod={paymentMethod}
-        paymentReference={paymentReference}
-        paymentProof={paymentProof}
         guestForm={guestForm}
+        loyaltyState={{ useLoyaltyPoints, loyalty: loyaltyQuery.data || null, estimatedDiscount: estimatedLoyaltyDiscount }}
+        couponState={{ couponCode, validation: couponValidation, isApplying: isApplyingCoupon }}
         isCheckingOut={isCheckingOut}
         formError={formError}
-        paymentInstructions={PAYMENT_INSTRUCTIONS}
         onClose={() => setShowPaymentForm(false)}
         onSelectPaymentMethod={setPaymentMethod}
+        onToggleLoyaltyPoints={setUseLoyaltyPoints}
+        onCouponCodeChange={handleCouponCodeChange}
+        onApplyCoupon={handleApplyCoupon}
         onGuestFieldChange={handleGuestFieldChange}
-        onPaymentReferenceChange={setPaymentReference}
-        onPaymentProofChange={handlePaymentProofChange}
         onCheckout={handleCheckout}
       />
 
@@ -291,6 +325,8 @@ const CartPage: React.FC<StoreCartPageProps> = ({ navigateTo, onCartUpdate, site
             isGuest={isGuest}
             user={user}
             guestForm={guestForm}
+            loyaltyState={{ useLoyaltyPoints, loyalty: loyaltyQuery.data || null, estimatedDiscount: estimatedLoyaltyDiscount }}
+            couponState={{ couponCode, validation: couponValidation, isApplying: isApplyingCoupon }}
             isCheckingOut={isCheckingOut}
             formError={formError}
             onOpenPayment={() => setShowPaymentForm(true)}

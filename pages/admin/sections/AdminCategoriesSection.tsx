@@ -41,7 +41,7 @@ interface AdminCategoriesSectionProps {
   DynamicIcon: React.ComponentType<{ name: string; className?: string }>;
   IconPicker: React.ComponentType<{ label: string; value: string; onChange: (value: string) => void }>;
   SubCategoryIconPicker: React.ComponentType<{ value: string; onChange: (value: string) => void }>;
-  ImageInput: React.ComponentType<{ label: string; value: string; onChange: (value: string) => void; placeholder?: string }>;
+  ImageInput: React.ComponentType<{ label: string; value: string; onChange: (value: string) => void; placeholder?: string; uploadPreset?: 'default' | 'siteLogo' | 'favicon' | 'avatar' | 'icon' }>;
   setEditingCategory: (value: Category | null) => void;
   setEditingSubCategory: (value: SubCategory | null) => void;
   setEditCatName: (value: string) => void;

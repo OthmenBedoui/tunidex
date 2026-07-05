@@ -13,7 +13,7 @@ import {
   X
 } from 'lucide-react';
 import { SiteConfig, User } from '../../types';
-import type { AdminNotificationItem } from '../../App';
+import type { AdminNotificationItem } from '../../src/types/adminNotifications';
 import { AdminTab } from '../../pages/admin/adminRouteConfig';
 
 interface AdminTopbarProps {

@@ -1,3 +1,5 @@
+import env from '../config/env.js';
+
 type WelcomeMessagePayload = {
   botId: string;
   phone: string;
@@ -21,8 +23,39 @@ export const buildWelcomeMessage = (fullName?: string | null, tier?: string | nu
 };
 
 export const sendWhatsappWelcomeMessage = async (payload: WelcomeMessagePayload) => {
-  const webhookUrl = process.env.WHATSAPP_BOT_WEBHOOK_URL;
-  const webhookToken = process.env.WHATSAPP_BOT_WEBHOOK_TOKEN;
+  const webhookUrl = env.whatsappBotWebhookUrl;
+  const webhookToken = env.whatsappBotWebhookToken;
+
+  if (!webhookUrl) {
+    return {
+      status: 'PENDING_CONFIGURATION',
+      error: 'WHATSAPP_BOT_WEBHOOK_URL is not configured.'
+    };
+  }
+
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(webhookToken ? { Authorization: `Bearer ${webhookToken}` } : {})
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => '');
+    return {
+      status: 'FAILED',
+      error: responseText || `WhatsApp bot webhook failed with status ${response.status}.`
+    };
+  }
+
+  return { status: 'SENT', error: null };
+};
+
+export const sendWhatsappWebhookEvent = async (payload: Record<string, unknown>) => {
+  const webhookUrl = env.whatsappBotWebhookUrl;
+  const webhookToken = env.whatsappBotWebhookToken;
 
   if (!webhookUrl) {
     return {
