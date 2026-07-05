@@ -1,14 +1,19 @@
 import React from 'react';
 import { CheckCircle2 } from 'lucide-react';
+import PaymentInstructionsCard from '../order/PaymentInstructionsCard';
+import { Order, SiteConfig } from '../../../types';
 import { CheckoutSuccessState } from './types';
 
 interface CheckoutSuccessPanelProps {
   checkoutSuccess: CheckoutSuccessState;
   isGuest: boolean;
   navigateTo: (page: string) => void;
+  siteConfig: SiteConfig;
+  onNotify: (message: string, type?: 'success' | 'error') => void;
+  onOrderUpdated: (order: Order) => void;
 }
 
-const CheckoutSuccessPanel: React.FC<CheckoutSuccessPanelProps> = ({ checkoutSuccess, isGuest, navigateTo }) => (
+const CheckoutSuccessPanel: React.FC<CheckoutSuccessPanelProps> = ({ checkoutSuccess, isGuest, navigateTo, siteConfig, onNotify, onOrderUpdated }) => (
   <div className="mx-auto max-w-4xl px-4 py-16">
     <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-xl">
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-700 px-8 py-10 text-white">
@@ -23,16 +28,16 @@ const CheckoutSuccessPanel: React.FC<CheckoutSuccessPanelProps> = ({ checkoutSuc
         <div className="space-y-4">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
             <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Commande</div>
-            <div className="mt-2 text-2xl font-black text-slate-900">{checkoutSuccess.orderNumber}</div>
-            {checkoutSuccess.invoiceNumber && <div className="mt-2 text-sm text-slate-500">Facture / proforma: {checkoutSuccess.invoiceNumber}</div>}
+            <div className="mt-2 text-2xl font-black text-slate-900">{checkoutSuccess.order.orderNumber}</div>
+            {checkoutSuccess.order.invoice?.invoiceNumber && <div className="mt-2 text-sm text-slate-500">Facture / proforma: {checkoutSuccess.order.invoice.invoiceNumber}</div>}
           </div>
 
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-900">
-            <p>Votre paiement est maintenant en revue manuelle.</p>
+            <p>Votre commande est creee. Suivez maintenant exactement les instructions de paiement ci-dessous.</p>
             <p className="mt-2">Le produit digital restera verrouille jusqu a validation du paiement et livraison explicite par un agent.</p>
             <p className="mt-2">Conservez votre numero de commande pour le suivi.</p>
             {isGuest && <p className="mt-2">Un email de suivi vous sera envoye. Pas besoin de copier un long token.</p>}
-            {checkoutSuccess.emailStatus === 'FAILED' && (
+            {checkoutSuccess.order.emailStatus === 'FAILED' && (
               <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
                 L email n a pas pu etre envoye automatiquement, mais votre commande est bien enregistree.
               </p>
@@ -61,6 +66,10 @@ const CheckoutSuccessPanel: React.FC<CheckoutSuccessPanelProps> = ({ checkoutSuc
             Retour a la boutique
           </button>
         </div>
+      </div>
+
+      <div className="mt-6">
+        <PaymentInstructionsCard order={checkoutSuccess.order} siteConfig={siteConfig} onNotify={onNotify} onOrderUpdated={onOrderUpdated} />
       </div>
     </div>
   </div>

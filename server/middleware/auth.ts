@@ -1,25 +1,26 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
-
-dotenv.config();
-const JWT_SECRET = process.env.JWT_SECRET || 'secret-key-g2g-tunisie';
+import { verifyAccessToken } from '../services/authTokenService.js';
+import { isStaffRole } from '../constants/roles.js';
 
 export const authenticate = (req: Request & { user?: { id: string, role: string } }, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ error: 'No token' });
+  if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ error: 'Authentication required.' });
   try {
-    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET) as { id: string, role: string };
+    const decoded = verifyAccessToken(authHeader.split(' ')[1]);
     req.user = decoded;
     next();
-  } catch { return res.status(403).json({ error: 'Invalid token' }); }
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) return res.status(401).json({ error: 'Access token expired.' });
+    return res.status(401).json({ error: 'Invalid access token.' });
+  }
 };
 
 export const optionalAuthenticate = (req: Request & { user?: { id: string, role: string } }, _res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) return next();
   try {
-    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET) as { id: string, role: string };
+    const decoded = verifyAccessToken(authHeader.split(' ')[1]);
     req.user = decoded;
   } catch {
     // Public routes keep working; protected routes still use authenticate.
@@ -33,11 +34,6 @@ export const isAdmin = (req: Request & { user?: { role: string } }, res: Respons
 };
 
 export const isStaff = (req: Request & { user?: { role: string } }, res: Response, next: NextFunction) => { 
-    if (
-        req.user?.role !== 'ADMIN' &&
-        req.user?.role !== 'AGENT' &&
-        req.user?.role !== 'SUB_ADMIN' &&
-        req.user?.role !== 'SELLER'
-    ) return res.status(403).json({ error: 'Staff only' }); 
+    if (!isStaffRole(req.user?.role)) return res.status(403).json({ error: 'Staff only' }); 
     next(); 
 };

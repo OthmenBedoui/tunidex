@@ -8,8 +8,18 @@ log() {
   printf '[deploy] %s\n' "$1"
 }
 
-if ! command -v docker >/dev/null 2>&1; then
-  log "Docker n'est pas installe ou n'est pas dans le PATH."
+if ! command -v node >/dev/null 2>&1; then
+  log "Node.js n'est pas installe."
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  log "npm n'est pas installe."
+  exit 1
+fi
+
+if ! command -v psql >/dev/null 2>&1; then
+  log "PostgreSQL client n'est pas installe."
   exit 1
 fi
 
@@ -19,15 +29,11 @@ if [ ! -f ".env" ]; then
 fi
 
 required_vars=(
-  APP_PORT
-  POSTGRES_DB
-  POSTGRES_USER
-  POSTGRES_PASSWORD
+  PORT
+  DATABASE_URL
   JWT_SECRET
-  DEFAULT_ADMIN_EMAIL
-  DEFAULT_ADMIN_PASSWORD
-  DEFAULT_AGENT_EMAIL
-  DEFAULT_AGENT_PASSWORD
+  AUTH_SECRET
+  AUTH_URL
 )
 
 for var_name in "${required_vars[@]}"; do
@@ -37,48 +43,22 @@ for var_name in "${required_vars[@]}"; do
   fi
 done
 
-DOCKER_CMD=(docker compose)
-if ! docker compose version >/dev/null 2>&1; then
-  if command -v docker-compose >/dev/null 2>&1; then
-    DOCKER_CMD=(docker-compose)
-  else
-    log "Ni 'docker compose' ni 'docker-compose' n'est disponible."
-    exit 1
-  fi
-fi
+log "Installation des dependances npm..."
+npm install
 
-if ! "${DOCKER_CMD[@]}" ps >/dev/null 2>&1; then
-  if command -v sudo >/dev/null 2>&1; then
-    DOCKER_CMD=(sudo "${DOCKER_CMD[@]}")
-  else
-    log "Impossible d'acceder a Docker avec l'utilisateur courant."
-    exit 1
-  fi
-fi
-
-log "Verification de la configuration Docker..."
-"${DOCKER_CMD[@]}" config >/dev/null
-
-log "Rebuild et redemarrage des conteneurs..."
-"${DOCKER_CMD[@]}" up -d --build
+log "Build front + back..."
+npm run build
 
 log "Application des migrations Prisma..."
-"${DOCKER_CMD[@]}" exec -T app sh -lc '
-  if [ -z "${DATABASE_URL:-}" ]; then
-    ENCODED_USER="$(node -p "encodeURIComponent(process.argv[1])" "$POSTGRES_USER")"
-    ENCODED_PASSWORD="$(node -p "encodeURIComponent(process.argv[1])" "$POSTGRES_PASSWORD")"
-    ENCODED_DB="$(node -p "encodeURIComponent(process.argv[1])" "$POSTGRES_DB")"
-    export DATABASE_URL="postgresql://${ENCODED_USER}:${ENCODED_PASSWORD}@db:5432/${ENCODED_DB}"
-  fi
-  npx prisma migrate deploy --schema server/schema.prisma
-'
+npx prisma migrate deploy --schema server/schema.prisma
+npx prisma generate --schema server/schema.prisma
 
-log "Etat des services:"
-"${DOCKER_CMD[@]}" ps
+if systemctl list-unit-files | grep -q '^tunibots\.service'; then
+  log "Redemarrage du service systemd tunibots..."
+  sudo systemctl restart tunibots
+  sudo systemctl --no-pager --full status tunibots
+else
+  log "Service systemd tunibots non installe. Lance l'application avec: npm start"
+fi
 
-sleep 3
-
-log "Derniers logs de l'application:"
-"${DOCKER_CMD[@]}" logs --tail=60 app
-
-log "Deploiement termine."
+log "Deploiement local termine."

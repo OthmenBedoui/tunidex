@@ -6,6 +6,7 @@ export type AuthAudience = 'client' | 'admin';
 export interface StoreLoginPageProps {
   onLoginSuccess: (token: string, user: User, redirectPath?: string) => void;
   navigateTo: (page: string) => void;
+  onNotify: (message: string, type?: 'success' | 'error') => void;
   siteConfig: SiteConfig;
   initialMode?: AuthMode;
   audience?: AuthAudience;
@@ -17,4 +18,5 @@ export interface StoreProfilePageProps {
   onUpdateUser: (user: User) => void;
   onDeleteAccountSuccess: () => void;
   navigateTo: (page: string) => void;
+  onNotify: (message: string, type?: 'success' | 'error') => void;
 }

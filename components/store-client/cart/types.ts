@@ -1,4 +1,4 @@
-import { Listing, Order, SiteConfig, User } from '../../../types';
+import { CouponValidationResult, Listing, LoyaltySummary, Order, SiteConfig, UploadAssetResponse, User } from '../../../types';
 
 export interface GuestFormState {
   firstName: string;
@@ -8,28 +8,36 @@ export interface GuestFormState {
 }
 
 export interface CheckoutSuccessState {
-  orderNumber: string;
-  invoiceNumber?: string;
-  emailStatus?: string;
-  status?: string;
-  trackingToken?: string | null;
+  order: Order;
 }
 
 export type PaymentProofState = {
-  fileName: string;
-  mimeType: string;
-  size: number;
-  dataUrl: string;
+  file: File;
+  previewUrl?: string;
+  upload?: UploadAssetResponse | null;
 } | null;
 
 export interface StoreCartPageProps {
   navigateTo: (page: string) => void;
   onCartUpdate: (count: number) => void;
+  onNotify: (message: string, type?: 'success' | 'error') => void;
   siteConfig: SiteConfig;
   listings: Listing[];
   user: User;
   orders: Order[];
   onOrderCreated: (order: Order) => void;
+}
+
+export interface LoyaltyCheckoutState {
+  useLoyaltyPoints: boolean;
+  loyalty?: LoyaltySummary | null;
+  estimatedDiscount: number;
+}
+
+export interface CouponCheckoutState {
+  couponCode: string;
+  validation?: CouponValidationResult | null;
+  isApplying: boolean;
 }
 
 export interface CheckoutIdentityFormProps {

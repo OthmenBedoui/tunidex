@@ -1,9 +1,10 @@
 import React from 'react';
-import { ArrowRight, Star, Zap } from 'lucide-react';
+import { ArrowRight, Zap } from 'lucide-react';
 import { Listing } from '../../../types';
 import { getListingDiscountLabel, getPackageSavings, hasListingDiscount, hasPackageSavings } from '../../../utils/pricing';
 import PriceDisplay from '../PriceDisplay';
 import { ListingImage } from '../ListingImage';
+import StarRating from '../reviews/StarRating';
 
 interface HorizontalListingCardProps {
   listing: Listing;
@@ -52,13 +53,11 @@ const HorizontalListingCard: React.FC<HorizontalListingCardProps> = ({ listing, 
             Gain client: {getPackageSavings(listing).toFixed(2)} TND
           </div>
         )}
-        <div className="mb-2 flex items-center space-x-1">
-          <div className="flex text-yellow-400">
-            {[...Array(5)].map((_, index) => (
-              <Star key={index} size={12} fill="currentColor" />
-            ))}
-          </div>
-          <span className="text-xs text-slate-400">(4.9)</span>
+        <div className="mb-2 flex items-center gap-2">
+          <StarRating rating={Math.round(listing.ratingAverage || 0)} size={12} />
+          <span className="text-xs text-slate-400">
+            {listing.ratingCount ? `${(listing.ratingAverage || 0).toFixed(1)} (${listing.ratingCount})` : 'Nouveau'}
+          </span>
         </div>
         <h3
           className="mb-2 line-clamp-2 cursor-pointer text-base font-bold text-slate-900 transition-colors group-hover:text-indigo-600"

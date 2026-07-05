@@ -1,6 +1,7 @@
 import React from 'react';
 import * as LucideIcons from 'lucide-react';
 import { Category, SiteConfig } from '../../../types';
+import { buildStoreWhatsappUrl } from '../../../utils/whatsapp';
 import StoreDynamicIcon from './StoreDynamicIcon';
 
 interface StoreFooterProps {
@@ -12,6 +13,12 @@ interface StoreFooterProps {
 const StoreFooter: React.FC<StoreFooterProps> = ({ categories, navigateTo, siteConfig }) => {
   const logoSize = Math.min(80, Math.max(24, Number(siteConfig.logoSize || 32)));
   const footerLogoSize = Math.min(88, Math.max(32, logoSize + 8));
+  const trustBadges = [
+    { label: 'Paiement securise', icon: LucideIcons.ShieldCheck },
+    { label: 'Livraison instantanee', icon: LucideIcons.Zap },
+    { label: 'Support 7j/7', icon: LucideIcons.Headphones }
+  ];
+  const whatsappHref = buildStoreWhatsappUrl(siteConfig, 'Bonjour TuniBots, j ai besoin d aide.');
 
   return (
     <footer className="relative mt-auto overflow-hidden border-t border-slate-800 bg-slate-950 text-white">
@@ -44,11 +51,14 @@ const StoreFooter: React.FC<StoreFooterProps> = ({ categories, navigateTo, siteC
             <p className="max-w-md text-sm leading-7 text-slate-300">
               {siteConfig.footerDescription || 'La destination premium pour vos comptes, licences, abonnements, outils IA et services digitaux en Tunisie.'}
             </p>
-            <div className="mt-6 flex flex-wrap gap-2">
-              {['Paiement sécurisé', 'Livraison rapide', 'Support local'].map((item) => (
-                <span key={item} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-bold text-slate-200">
-                  {item}
-                </span>
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              {trustBadges.map((item) => (
+                <div key={item.label} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-[11px] font-bold text-slate-200 backdrop-blur">
+                  <div className="flex items-center gap-2">
+                    <item.icon size={15} className="theme-text-accent" />
+                    <span>{item.label}</span>
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -59,6 +69,10 @@ const StoreFooter: React.FC<StoreFooterProps> = ({ categories, navigateTo, siteC
               <button onClick={() => navigateTo('home')} className="block hover:text-white">Accueil</button>
               <button onClick={() => navigateTo('about')} className="block hover:text-white">À propos</button>
               <button onClick={() => navigateTo('contact')} className="block hover:text-white">Contact</button>
+              <button onClick={() => navigateTo('how-it-works')} className="block hover:text-white">Comment ça marche</button>
+              <button onClick={() => navigateTo('faq')} className="block hover:text-white">FAQ</button>
+              <button onClick={() => navigateTo('cgv')} className="block hover:text-white">CGV</button>
+              <button onClick={() => navigateTo('refund-policy')} className="block hover:text-white">Remboursement</button>
               <button onClick={() => navigateTo('privacy-policy')} className="block hover:text-white">Privacy Policy</button>
               <button onClick={() => navigateTo('terms')} className="block hover:text-white">Terms of Service</button>
               <button onClick={() => navigateTo('data-deletion')} className="block hover:text-white">Data Deletion</button>
@@ -101,9 +115,9 @@ const StoreFooter: React.FC<StoreFooterProps> = ({ categories, navigateTo, siteC
                   {siteConfig.footerPhone}
                 </a>
               )}
-              {siteConfig.footerWhatsapp && (
+              {whatsappHref && (
                 <a
-                  href={`https://wa.me/${siteConfig.footerWhatsapp.replace(/\D/g, '')}`}
+                  href={whatsappHref}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center gap-2 hover:text-white"

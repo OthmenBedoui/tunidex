@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { api } from '../services/api';
+import { api, clearStoredAccessToken, storeAccessToken } from '../services/api';
 import { User } from '../types';
 
 interface AuthCallbackProps {
@@ -29,13 +29,13 @@ const AuthCallback: React.FC<AuthCallbackProps> = ({ onLoginSuccess, navigateTo 
       return;
     }
 
-    localStorage.setItem('token', token);
+    storeAccessToken(token);
     api.getCurrentUser()
       .then((user) => {
         onLoginSuccess(token, user, next);
       })
       .catch((authError) => {
-        localStorage.removeItem('token');
+        clearStoredAccessToken();
         setMessage(authError instanceof Error ? authError.message : 'Impossible de finaliser la connexion.');
         window.setTimeout(() => navigateTo('login'), 1800);
       });

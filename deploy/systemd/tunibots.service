@@ -1,0 +1,19 @@
+[Unit]
+Description=TuniBots local Node.js application
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=www-data
+WorkingDirectory=/var/www/tunibots
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

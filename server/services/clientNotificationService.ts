@@ -1,8 +1,11 @@
+import { NotificationType, Prisma } from '@prisma/client';
 import prisma from '../prisma.js';
+import { notifyUser } from './notificationService.js';
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT_CART: 'Panier brouillon',
   IN_PROGRESS: 'En cours',
+  PAID: 'Payee',
   DELIVERED: 'Livree',
   REGISTERED: 'Enregistree',
   PENDING_PAYMENT: 'Paiement en attente',
@@ -23,55 +26,56 @@ const buildStatusNotificationContent = (orderNumber: string, status: string, pre
   switch (status) {
     case 'PAYMENT_UNDER_REVIEW':
       return {
-        type: 'ORDER_STATUS',
+        type: 'SYSTEM' as NotificationType,
         title: 'Commande enregistree',
         message: `Votre commande ${orderNumber} a bien ete enregistree et votre paiement est en cours de verification.`
       };
     case 'PAYMENT_APPROVED':
+    case 'PAID':
       return {
-        type: 'ORDER_STATUS',
+        type: 'PAYMENT_APPROVED' as NotificationType,
         title: 'Paiement approuve',
-        message: `Le paiement de votre commande ${orderNumber} a ete approuve. Preparation en cours.`
+        message: `Le paiement de votre commande ${orderNumber} a ete approuve. ${status === 'PAID' ? 'La commande est maintenant reglee.' : 'Preparation en cours.'}`
       };
     case 'PAYMENT_REJECTED':
       return {
-        type: 'ORDER_STATUS',
+        type: 'PAYMENT_REJECTED' as NotificationType,
         title: 'Paiement rejete',
         message: `Le paiement de votre commande ${orderNumber} a ete rejete. Veuillez verifier vos informations et recontacter le support si besoin.`
       };
     case 'IN_DELIVERY':
       return {
-        type: 'ORDER_STATUS',
+        type: 'SYSTEM' as NotificationType,
         title: 'Livraison en preparation',
         message: `Votre commande ${orderNumber} est en cours de preparation pour la livraison.`
       };
     case 'DELIVERED':
       return {
-        type: 'ORDER_STATUS',
+        type: 'ORDER_DELIVERED' as NotificationType,
         title: 'Commande livree',
         message: `Votre commande ${orderNumber} a ete livree. Consultez votre espace client pour voir le contenu.`
       };
     case 'COMPLETED':
       return {
-        type: 'ORDER_STATUS',
+        type: 'SYSTEM' as NotificationType,
         title: 'Commande terminee',
         message: `Votre commande ${orderNumber} est terminee. Merci pour votre confiance.`
       };
     case 'CANCELLED':
       return {
-        type: 'ORDER_STATUS',
+        type: 'SYSTEM' as NotificationType,
         title: 'Commande annulee',
         message: `Votre commande ${orderNumber} a ete annulee.`
       };
     case 'REFUNDED':
       return {
-        type: 'ORDER_STATUS',
+        type: 'SYSTEM' as NotificationType,
         title: 'Commande remboursee',
         message: `Votre commande ${orderNumber} a ete remboursee.`
       };
     default:
       return {
-        type: 'ORDER_STATUS',
+        type: 'SYSTEM' as NotificationType,
         title: 'Statut de commande mis a jour',
         message: previousLabel
           ? `Votre commande ${orderNumber} est passee de "${previousLabel}" a "${currentLabel}".`
@@ -80,57 +84,22 @@ const buildStatusNotificationContent = (orderNumber: string, status: string, pre
   }
 };
 
-export const serializeClientNotification = (notification: {
-  id: string;
-  userId: string;
-  orderId: string | null;
-  type: string;
-  title: string;
-  message: string;
-  metadata: unknown;
-  readAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-  order?: { orderNumber: string; status: string } | null;
-}) => ({
-  id: notification.id,
-  userId: notification.userId,
-  orderId: notification.orderId,
-  orderNumber: notification.order?.orderNumber || null,
-  orderStatus: notification.order?.status || null,
-  type: notification.type,
-  title: notification.title,
-  message: notification.message,
-  metadata: notification.metadata as Record<string, unknown> | null,
-  read: Boolean(notification.readAt),
-  readAt: notification.readAt?.toISOString() || null,
-  createdAt: notification.createdAt.toISOString(),
-  updatedAt: notification.updatedAt.toISOString()
-});
-
-export const createClientNotification = async (params: {
-  userId: string;
-  orderId?: string | null;
-  type: string;
-  title: string;
-  message: string;
-  metadata?: Record<string, unknown>;
-}) => prisma.clientNotification.create({
-  data: {
-    userId: params.userId,
-    orderId: params.orderId || null,
-    type: params.type,
-    title: params.title,
-    message: params.message,
-    metadata: params.metadata
-  }
-});
+export const getOrderStatusNotificationContent = (orderNumber: string, status: string, previousStatus?: string | null) =>
+  buildStatusNotificationContent(orderNumber, status, previousStatus);
 
 export const notifyClientOrderStatus = async (params: {
   orderId: string;
   status: string;
   previousStatus?: string | null;
+  force?: boolean;
 }) => {
+  if (
+    !params.force
+    && (params.status === 'PAYMENT_APPROVED' || params.status === 'PAYMENT_REJECTED' || params.status === 'DELIVERED' || params.status === 'PAID')
+  ) {
+    return null;
+  }
+
   const order = await prisma.order.findUnique({
     where: { id: params.orderId },
     select: {
@@ -143,7 +112,7 @@ export const notifyClientOrderStatus = async (params: {
   if (!order?.userId) return null;
 
   const content = buildStatusNotificationContent(order.orderNumber, params.status, params.previousStatus);
-  return createClientNotification({
+  return notifyUser({
     userId: order.userId,
     orderId: order.id,
     type: content.type,
@@ -152,39 +121,7 @@ export const notifyClientOrderStatus = async (params: {
     metadata: {
       status: params.status,
       previousStatus: params.previousStatus || null
-    }
+    } as Prisma.InputJsonValue,
+    dedupeKey: `${content.type}:${order.id}:${params.status}`
   });
-};
-
-export const sendCustomClientNotification = async (params: {
-  title: string;
-  message: string;
-  targetUserIds?: string[];
-  actorId?: string | null;
-}) => {
-  const candidateUsers = params.targetUserIds?.length
-    ? await prisma.user.findMany({
-        where: { id: { in: params.targetUserIds } },
-        select: { id: true }
-      })
-    : await prisma.user.findMany({
-        where: { role: 'CLIENT' },
-        select: { id: true }
-      });
-
-  if (candidateUsers.length === 0) {
-    return { recipients: 0 };
-  }
-
-  await prisma.clientNotification.createMany({
-    data: candidateUsers.map((user) => ({
-      userId: user.id,
-      type: 'CUSTOM',
-      title: params.title,
-      message: params.message,
-      metadata: params.actorId ? { actorId: params.actorId } : undefined
-    }))
-  });
-
-  return { recipients: candidateUsers.length };
 };

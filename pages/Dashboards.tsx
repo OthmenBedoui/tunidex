@@ -1,31 +1,39 @@
 
-import React, { useState, useEffect, useLayoutEffect } from 'react';
-import { Package, TrendingUp, DollarSign, Plus, Loader2, Zap, Users, Shield, Trash2, Edit, LayoutGrid, Save, X, User as UserIcon, Clock, History } from 'lucide-react';
-import { User, Order, OrderStatus, Listing, UserRole, Category, SubCategory, ProductType, LoginCredential, SiteConfig, HeroSlide, HeroPromoBanner, FloatingBrandCard, DiscountType, ProductVariant, StoreSectionConfig, CustomFont, ClientNotification } from '../types';
+import React, { useState, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Package, TrendingUp, DollarSign, Plus, Loader2, Zap, Users, Shield, Trash2, Edit, LayoutGrid, Save, X, User as UserIcon, Clock, History, Download } from 'lucide-react';
+import { User, Order, OrderItem, OrderStatus, Listing, UserRole, Category, SubCategory, ProductType, LoginCredential, SiteConfig, HeroSlide, HeroPromoBanner, FloatingBrandCard, DiscountType, ProductVariant, StoreSectionConfig, CustomFont, ClientNotification, PaymentMethodConfig, Review, LoyaltySummary } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { generateListingDescription } from '../services/geminiService';
 import { api, SeoAnalytics } from '../services/api';
+import { useAdminStats } from '../src/hooks/useAdminStats';
+import { useAdminUsers } from '../src/hooks/useAdminUsers';
+import { useSeoAnalytics } from '../src/hooks/useSeoAnalytics';
 import * as LucideIcons from 'lucide-react';
 import { AdminErrorState, AdminPremiumLoader } from '../components/admin/AdminSurfaceState';
 import AdminCategoriesSection from './admin/sections/AdminCategoriesSection';
 import AdminListingsSection from './admin/sections/AdminListingsSection';
 import AdminOrdersSection from './admin/sections/AdminOrdersSection';
+import AdminCouponsSection from './admin/sections/AdminCouponsSection';
+import AdminReviewsSection from './admin/sections/AdminReviewsSection';
 import AdminUsersSection from './admin/sections/AdminUsersSection';
-import { ImageInput } from '../components/shared/ImageInput';
+import { ImageInput as BaseImageInput } from '../components/shared/ImageInput';
 import { RichTextEditor } from '../components/shared/RichTextEditor';
 import { ListingImage } from '../components/store-client/ListingImage';
 import { AdminEmptyState, AdminPanelCard, AdminStickyActionBar } from '../components/admin/AdminWorkspace';
+import StarRating from '../components/store-client/reviews/StarRating';
 import { getListingDiscountLabel, getListingFinalPrice, getPackageOriginalTotal, getPackageSavings, hasListingDiscount } from '../utils/pricing';
+import { handleApiError } from '../utils/apiError';
 import { richTextToPlainText, sanitizeRichText } from '../utils/richText';
 import { getMergedStoreSections, STORE_SECTION_DEFINITIONS } from '../utils/storeSections';
 import { AdminTab } from './admin/adminRouteConfig';
+import { queryKeys } from '../src/queryKeys';
 
 interface AdminDashboardProps {
-  orders: Order[];
   listings: Listing[];
   categories: Category[];
   onUpdateStatus: (orderId: string, status: OrderStatus) => void;
-  onAdminOrderAction: (action: 'approvePayment' | 'rejectPayment' | 'createDelivery' | 'sendDelivery' | 'resendDelivery', orderId: string, payload?: any) => Promise<void>;
+  onAdminOrderAction: (action: 'approvePayment' | 'rejectPayment' | 'createDelivery' | 'sendDelivery' | 'resendDelivery', orderId: string, payload?: unknown) => Promise<void>;
   onCreateListing: (listing: Partial<Listing>) => Promise<void>;
   onUpdateListing: (listingId: string, listing: Partial<Listing>) => Promise<void>;
   onDeleteListing: (listingId: string) => Promise<void>;
@@ -143,6 +151,30 @@ const PREMIUM_COLOR_PALETTES = [
     accentTextColor: '#831843',
   },
 ];
+
+const defaultPaymentMethodDraft = (): PaymentMethodConfig => ({
+  id: `payment_${Math.random().toString(36).slice(2, 8)}`,
+  label: 'Nouvelle methode',
+  instructions: 'Expliquez ici comment le client doit payer puis ce qu il doit envoyer comme preuve.',
+  accountDetails: 'Ajoutez ici les coordonnees exactes: numero, RIB, nom, note interne.',
+  isActive: true,
+  sortOrder: 100
+});
+
+const defaultStaticFaqItems = () => ([
+  {
+    question: 'Combien de temps prend la verification du paiement ?',
+    answer: '<p>La vérification manuelle prend généralement quelques heures, selon l’heure d’envoi de votre preuve et l’affluence du support.</p>'
+  },
+  {
+    question: 'Comment envoyer ma preuve de paiement ?',
+    answer: '<p>Depuis l’écran de confirmation ou la page de suivi, joignez une capture et/ou une référence de transaction avec votre numéro de commande.</p>'
+  },
+  {
+    question: 'Puis-je contacter le support sur WhatsApp ?',
+    answer: '<p>Oui. Un bouton WhatsApp est disponible sur les pages clés du store pour accélérer la prise en charge avec le bon contexte de commande.</p>'
+  }
+]);
 
 const LUCIDE_ICON_OPTIONS = [
   'Gamepad2', 'Package', 'MonitorPlay', 'Bot', 'Sparkles', 'Crown', 'Shield', 'Zap',
@@ -465,7 +497,7 @@ const SubCategoryIconPicker = ({
   <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
     <IconPicker label="Icône Lucide" value={isImageIconValue(value) ? 'Package' : value} onChange={onChange} />
     <div className="border-t border-slate-100 pt-4">
-      <ImageInput
+      <AdminImageInput
         label="Icône image"
         value={isImageIconValue(value) ? value : ''}
         onChange={onChange}
@@ -476,9 +508,13 @@ const SubCategoryIconPicker = ({
   </div>
 );
 
+const AdminImageInput = (props: React.ComponentProps<typeof BaseImageInput>) => (
+  <BaseImageInput {...props} uploadMode="server" />
+);
+
 const ORDER_STATUS_STEPS: { status: OrderStatus; label: string; description: string }[] = [
   { status: OrderStatus.PAYMENT_UNDER_REVIEW, label: 'Paiement en revue', description: 'Commande reçue, paiement soumis et en validation manuelle.' },
-  { status: OrderStatus.PAYMENT_APPROVED, label: 'Paiement approuvé', description: 'Paiement validé, livraison en préparation.' },
+  { status: OrderStatus.PAID, label: 'Payée', description: 'Paiement validé, facture prête et attente éventuelle de livraison.' },
   { status: OrderStatus.IN_DELIVERY, label: 'En livraison', description: 'Contenu digital préparé par un agent.' },
   { status: OrderStatus.DELIVERED, label: 'Livré', description: 'Commande livrée au client et clôturée.' }
 ];
@@ -486,6 +522,7 @@ const ORDER_STATUS_STEPS: { status: OrderStatus; label: string; description: str
 const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   [OrderStatus.DRAFT_CART]: 'Panier',
   [OrderStatus.IN_PROGRESS]: 'En cours',
+  [OrderStatus.PAID]: 'Payée',
   [OrderStatus.DELIVERED]: 'Livré',
   [OrderStatus.REGISTERED]: 'En cours',
   [OrderStatus.PENDING_PAYMENT]: 'Paiement attendu',
@@ -501,7 +538,7 @@ const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
 
 const getOrderStepIndex = (status: OrderStatus) => {
   if ([OrderStatus.REGISTERED, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_UNDER_REVIEW, OrderStatus.IN_PROGRESS].includes(status)) return 0;
-  if ([OrderStatus.PAYMENT_RECEIVED, OrderStatus.PAYMENT_APPROVED].includes(status)) return 1;
+  if ([OrderStatus.PAYMENT_RECEIVED, OrderStatus.PAYMENT_APPROVED, OrderStatus.PAID].includes(status)) return 1;
   if (status === OrderStatus.IN_DELIVERY) return 2;
   if (status === OrderStatus.COMPLETED) return 3;
   const index = ORDER_STATUS_STEPS.findIndex((step) => step.status === status);
@@ -511,7 +548,7 @@ const getOrderStepIndex = (status: OrderStatus) => {
 const getOrderStatusClasses = (status: OrderStatus) => {
   if (status === OrderStatus.DELIVERED || status === OrderStatus.COMPLETED) return 'bg-green-100 text-green-700';
   if (status === OrderStatus.CANCELLED || status === OrderStatus.PAYMENT_REJECTED || status === OrderStatus.REFUNDED) return 'bg-red-100 text-red-700';
-  if (status === OrderStatus.PAYMENT_APPROVED || status === OrderStatus.IN_DELIVERY) return 'bg-blue-100 text-blue-700';
+  if (status === OrderStatus.PAYMENT_APPROVED || status === OrderStatus.PAID || status === OrderStatus.IN_DELIVERY) return 'bg-blue-100 text-blue-700';
   return 'bg-amber-100 text-amber-700';
 };
 
@@ -521,25 +558,17 @@ const getListingStateClasses = (listing: Listing) => {
   return 'bg-red-100 text-red-700';
 };
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings, categories, onUpdateStatus, onAdminOrderAction, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, navigateTo, routeTab, focusOrderId, onFocusOrderHandled, onActiveTabChange }) => {
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ listings, categories, onUpdateStatus, onAdminOrderAction, onCreateListing, onUpdateListing, onDeleteListing, onRefreshCategories, user, siteConfig, onUpdateSiteConfig, onResendOrderInvoiceEmail, navigateTo, routeTab, focusOrderId, onFocusOrderHandled, onActiveTabChange }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>(routeTab);
   const requestAdminTab = (tab: AdminTab) => {
     setActiveTab(tab);
     onActiveTabChange?.(tab);
   };
   const [notificationAdminTab, setNotificationAdminTab] = useState<'orders' | 'client'>('orders');
-  const [notificationUsers, setNotificationUsers] = useState<User[]>([]);
-  const [stats, setStats] = useState<{name: string, sales: number, orders: number}[]>([]);
-  const [summary, setSummary] = useState({ totalSales: 0, totalOrders: 0, totalUsers: 0 });
-  const [topProducts, setTopProducts] = useState<Listing[]>([]);
-  const [isOverviewLoading, setIsOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [overviewReloadNonce, setOverviewReloadNonce] = useState(0);
   const [listingPendingDelete, setListingPendingDelete] = useState<Listing | null>(null);
   const [isDeletingListing, setIsDeletingListing] = useState(false);
-  const [orderFilter, setOrderFilter] = useState<'all' | OrderStatus>('all');
-  const [orderSearch, setOrderSearch] = useState('');
-  const [orderSort, setOrderSort] = useState<'newest' | 'oldest' | 'amount-desc' | 'amount-asc'>('newest');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [deliveryDrafts, setDeliveryDrafts] = useState<Record<string, { orderItemId: string; deliveryType: string; deliveryContent: string; activationGuide: string; restrictions: string; region: string }>>({});
   const [adminToast, setAdminToast] = useState<{ type: 'success' | 'error'; title: string; message: string } | null>(null);
@@ -688,8 +717,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [footerEmail, setFooterEmail] = useState(siteConfig.footerEmail || 'support@tunibots.tn');
   const [footerPhone, setFooterPhone] = useState(siteConfig.footerPhone || '+216 00 000 000');
   const [footerWhatsapp, setFooterWhatsapp] = useState(siteConfig.footerWhatsapp || '+216 00 000 000');
+  const [whatsappContactNumber, setWhatsappContactNumber] = useState(siteConfig.whatsappContactNumber || siteConfig.footerWhatsapp || '+216 00 000 000');
+  const [whatsappFloatingButtonEnabled, setWhatsappFloatingButtonEnabled] = useState(siteConfig.whatsappFloatingButtonEnabled ?? true);
   const [footerAddress, setFooterAddress] = useState(siteConfig.footerAddress || 'Tunis, Tunisie');
   const [footerCopyright, setFooterCopyright] = useState(siteConfig.footerCopyright || 'Tous droits réservés.');
+  const [cgvPageTitle, setCgvPageTitle] = useState(siteConfig.cgvPageTitle || 'Conditions générales de vente');
+  const [cgvPageContent, setCgvPageContent] = useState(siteConfig.cgvPageContent || '');
+  const [refundPageTitle, setRefundPageTitle] = useState(siteConfig.refundPageTitle || 'Politique de remboursement');
+  const [refundPageContent, setRefundPageContent] = useState(siteConfig.refundPageContent || '');
+  const [howItWorksPageTitle, setHowItWorksPageTitle] = useState(siteConfig.howItWorksPageTitle || 'Comment ça marche');
+  const [howItWorksPageContent, setHowItWorksPageContent] = useState(siteConfig.howItWorksPageContent || '');
+  const [faqPageTitle, setFaqPageTitle] = useState(siteConfig.faqPageTitle || 'Questions fréquentes');
+  const [faqPageIntro, setFaqPageIntro] = useState(siteConfig.faqPageIntro || 'Retrouvez ici les réponses rapides aux questions les plus fréquentes sur le paiement, la livraison et le support.');
+  const [faqItems, setFaqItems] = useState<Array<{ question: string; answer: string }>>(siteConfig.faqItems || defaultStaticFaqItems());
+  const [invoiceIssuerName, setInvoiceIssuerName] = useState(siteConfig.invoiceIssuerName || siteConfig.seoOrganizationName || siteConfig.siteName || 'TuniBots');
+  const [invoiceLegalMentions, setInvoiceLegalMentions] = useState(siteConfig.invoiceLegalMentions || "Facture emise pour des produits digitaux. Toute reproduction ou partage non autorise des contenus livres est interdit.");
   const [seoTitle, setSeoTitle] = useState(siteConfig.seoTitle || '');
   const [seoDescription, setSeoDescription] = useState(siteConfig.seoDescription || '');
   const [seoKeywords, setSeoKeywords] = useState(siteConfig.seoKeywords || '');
@@ -701,8 +743,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [seoGoogleAnalyticsId, setSeoGoogleAnalyticsId] = useState(siteConfig.seoGoogleAnalyticsId || '');
   const [seoGoogleAdsConversionId, setSeoGoogleAdsConversionId] = useState(siteConfig.seoGoogleAdsConversionId || '');
   const [seoFacebookPixelId, setSeoFacebookPixelId] = useState(siteConfig.seoFacebookPixelId || '');
-  const [seoAnalytics, setSeoAnalytics] = useState<SeoAnalytics>({ totalVisits: 0, uniqueVisitors: 0, dailyVisits: [], topCategories: [], topProducts: [] });
-  const [isSeoAnalyticsLoading, setIsSeoAnalyticsLoading] = useState(false);
+  const adminUsersQuery = useAdminUsers(activeTab === 'notification-config' && user.role === UserRole.ADMIN);
+  const overviewQuery = useAdminStats(activeTab === 'overview', overviewReloadNonce);
+  const seoAnalyticsQuery = useSeoAnalytics(activeTab === 'seo');
+  const notificationUsers = adminUsersQuery.data || [];
+  const isOverviewLoading = overviewQuery.isLoading;
+  const summary = useMemo(() => ({
+    totalSales: overviewQuery.data?.totalSales || 0,
+    totalOrders: overviewQuery.data?.totalOrders || 0,
+    totalUsers: overviewQuery.data?.totalUsers || 0
+  }), [overviewQuery.data]);
+  const stats = useMemo(() => (
+    (Array.isArray(overviewQuery.data?.dailyStats) ? overviewQuery.data?.dailyStats : []).map((s: {date: string, sales: number, orders: number}) => ({
+      name: new Date(s.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
+      sales: s.sales,
+      orders: s.orders
+    }))
+  ), [overviewQuery.data]);
+  const topProducts = Array.isArray(overviewQuery.data?.topProducts) ? overviewQuery.data.topProducts : [];
+  const seoAnalytics: SeoAnalytics = seoAnalyticsQuery.data || { totalVisits: 0, uniqueVisitors: 0, dailyVisits: [], topCategories: [], topProducts: [] };
+  const isSeoAnalyticsLoading = seoAnalyticsQuery.isLoading;
   const selectedPremiumPalette = PREMIUM_COLOR_PALETTES.find((palette) =>
     palette.accentColor.toLowerCase() === accentColor.toLowerCase() &&
     palette.accentHoverColor.toLowerCase() === accentHoverColor.toLowerCase() &&
@@ -747,9 +807,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   const [click2payEnabled, setClick2payEnabled] = useState(siteConfig.click2payEnabled || false);
   const [click2payMerchantId, setClick2payMerchantId] = useState(siteConfig.click2payMerchantId || '');
   const [click2payApiKey, setClick2payApiKey] = useState(siteConfig.click2payApiKey || '');
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>(siteConfig.paymentMethods || []);
   const [adminNotificationsEnabled, setAdminNotificationsEnabled] = useState(siteConfig.adminNotificationsEnabled ?? true);
   const [adminNotificationSound, setAdminNotificationSound] = useState(siteConfig.adminNotificationSound ?? true);
   const [adminNotificationPollSeconds, setAdminNotificationPollSeconds] = useState(siteConfig.adminNotificationPollSeconds || 15);
+  const [paymentReviewReminderHours, setPaymentReviewReminderHours] = useState(siteConfig.paymentReviewReminderHours || 4);
+  const [loyaltyPointsPerDinar, setLoyaltyPointsPerDinar] = useState(siteConfig.loyaltyPointsPerDinar || 10);
+  const [loyaltyMaxDiscountPercent, setLoyaltyMaxDiscountPercent] = useState(siteConfig.loyaltyMaxDiscountPercent || 25);
   const [whatsappNotificationsEnabled, setWhatsappNotificationsEnabled] = useState(siteConfig.whatsappNotificationsEnabled || false);
   const [whatsappNotificationWebhookUrl, setWhatsappNotificationWebhookUrl] = useState(siteConfig.whatsappNotificationWebhookUrl || '');
   const [telegramNotificationsEnabled, setTelegramNotificationsEnabled] = useState(siteConfig.telegramNotificationsEnabled || false);
@@ -802,8 +866,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     setFooterEmail(siteConfig.footerEmail || 'support@tunibots.tn');
     setFooterPhone(siteConfig.footerPhone || '+216 00 000 000');
     setFooterWhatsapp(siteConfig.footerWhatsapp || '+216 00 000 000');
+    setWhatsappContactNumber(siteConfig.whatsappContactNumber || siteConfig.footerWhatsapp || '+216 00 000 000');
+    setWhatsappFloatingButtonEnabled(siteConfig.whatsappFloatingButtonEnabled ?? true);
     setFooterAddress(siteConfig.footerAddress || 'Tunis, Tunisie');
     setFooterCopyright(siteConfig.footerCopyright || 'Tous droits réservés.');
+    setCgvPageTitle(siteConfig.cgvPageTitle || 'Conditions générales de vente');
+    setCgvPageContent(siteConfig.cgvPageContent || '');
+    setRefundPageTitle(siteConfig.refundPageTitle || 'Politique de remboursement');
+    setRefundPageContent(siteConfig.refundPageContent || '');
+    setHowItWorksPageTitle(siteConfig.howItWorksPageTitle || 'Comment ça marche');
+    setHowItWorksPageContent(siteConfig.howItWorksPageContent || '');
+    setFaqPageTitle(siteConfig.faqPageTitle || 'Questions fréquentes');
+    setFaqPageIntro(siteConfig.faqPageIntro || 'Retrouvez ici les réponses rapides aux questions les plus fréquentes sur le paiement, la livraison et le support.');
+    setFaqItems(siteConfig.faqItems || defaultStaticFaqItems());
+    setInvoiceIssuerName(siteConfig.invoiceIssuerName || siteConfig.seoOrganizationName || siteConfig.siteName || 'TuniBots');
+    setInvoiceLegalMentions(siteConfig.invoiceLegalMentions || "Facture emise pour des produits digitaux. Toute reproduction ou partage non autorise des contenus livres est interdit.");
     setSeoTitle(siteConfig.seoTitle || '');
     setSeoDescription(siteConfig.seoDescription || '');
     setSeoKeywords(siteConfig.seoKeywords || '');
@@ -835,9 +912,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
     setClick2payEnabled(siteConfig.click2payEnabled || false);
     setClick2payMerchantId(siteConfig.click2payMerchantId || '');
     setClick2payApiKey(siteConfig.click2payApiKey || '');
+    setPaymentMethods(siteConfig.paymentMethods || []);
     setAdminNotificationsEnabled(siteConfig.adminNotificationsEnabled ?? true);
     setAdminNotificationSound(siteConfig.adminNotificationSound ?? true);
     setAdminNotificationPollSeconds(siteConfig.adminNotificationPollSeconds || 15);
+    setPaymentReviewReminderHours(siteConfig.paymentReviewReminderHours || 4);
+    setLoyaltyPointsPerDinar(siteConfig.loyaltyPointsPerDinar || 10);
+    setLoyaltyMaxDiscountPercent(siteConfig.loyaltyMaxDiscountPercent || 25);
     setWhatsappNotificationsEnabled(siteConfig.whatsappNotificationsEnabled || false);
     setWhatsappNotificationWebhookUrl(siteConfig.whatsappNotificationWebhookUrl || '');
     setTelegramNotificationsEnabled(siteConfig.telegramNotificationsEnabled || false);
@@ -1015,6 +1096,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       adminNotificationsEnabled,
       adminNotificationSound,
       adminNotificationPollSeconds: Number(adminNotificationPollSeconds) || 15,
+      paymentReviewReminderHours: Number(paymentReviewReminderHours) || 4,
+      loyaltyPointsPerDinar: Number(loyaltyPointsPerDinar) || 0,
+      loyaltyMaxDiscountPercent: Number(loyaltyMaxDiscountPercent) || 0,
       whatsappNotificationsEnabled,
       whatsappNotificationWebhookUrl,
       telegramNotificationsEnabled,
@@ -1023,6 +1107,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
       messengerNotificationsEnabled,
       messengerNotificationWebhookUrl
     });
+  };
+
+  const updatePaymentMethodDraft = (index: number, patch: Partial<PaymentMethodConfig>) => {
+    setPaymentMethods((current) => current.map((method, methodIndex) => (methodIndex === index ? { ...method, ...patch } : method)));
+  };
+
+  const addPaymentMethodDraft = () => {
+    setPaymentMethods((current) => [
+      ...current,
+      {
+        ...defaultPaymentMethodDraft(),
+        sortOrder: (current[current.length - 1]?.sortOrder || 0) + 10
+      }
+    ]);
+  };
+
+  const removePaymentMethodDraft = (index: number) => {
+    setPaymentMethods((current) => current.filter((_, methodIndex) => methodIndex !== index));
   };
 
   const handleSendClientNotification = async () => {
@@ -1194,76 +1296,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
   }, [focusOrderId, onFocusOrderHandled]);
 
   useEffect(() => {
-    let isCancelled = false;
+    if (adminUsersQuery.error) {
+      console.warn('Unable to load users for notification center.', adminUsersQuery.error);
+    }
+  }, [adminUsersQuery.error]);
 
-    if (activeTab === 'notification-config' && user.role === UserRole.ADMIN) {
-        api.getAllUsers()
-          .then((users) => {
-            if (!isCancelled) {
-              setNotificationUsers(users);
-            }
-          })
-          .catch((error) => {
-            console.warn('Unable to load users for notification center.', error);
-          });
+  useEffect(() => {
+    if (overviewQuery.error) {
+      console.warn('Failed to fetch admin dashboard stats.', overviewQuery.error);
+      setOverviewError(overviewQuery.error instanceof Error ? overviewQuery.error.message : "Impossible de charger le dashboard.");
+      return;
     }
-    if (activeTab === 'overview') {
-        const fetchStats = async () => {
-            setIsOverviewLoading(true);
-            setOverviewError(null);
-            try {
-                const data = await api.getDailyStats();
-                if (isCancelled) return;
-                const formatted = (Array.isArray(data.dailyStats) ? data.dailyStats : []).map((s: {date: string, sales: number, orders: number}) => ({
-                    name: new Date(s.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
-                    sales: s.sales,
-                    orders: s.orders
-                }));
-                setStats(formatted);
-                setSummary({
-                    totalSales: data.totalSales || 0,
-                    totalOrders: data.totalOrders || 0,
-                    totalUsers: data.totalUsers || 0
-                });
-                setTopProducts(Array.isArray(data.topProducts) ? data.topProducts : []);
-            } catch (err) {
-                if (!isCancelled) {
-                  console.warn('Failed to fetch admin dashboard stats.', err);
-                  setOverviewError(err instanceof Error ? err.message : "Impossible de charger le dashboard.");
-                }
-            } finally {
-                if (!isCancelled) {
-                  setIsOverviewLoading(false);
-                }
-            }
-        };
-        void fetchStats();
-    }
-    if (activeTab === 'seo') {
-      const fetchSeoAnalytics = async () => {
-        setIsSeoAnalyticsLoading(true);
-        try {
-          const analytics = await api.getSeoAnalytics();
-          if (!isCancelled) {
-            setSeoAnalytics(analytics);
-          }
-        } catch (err) {
-          if (!isCancelled) {
-            console.warn('Failed to fetch SEO analytics.', err);
-          }
-        } finally {
-          if (!isCancelled) {
-            setIsSeoAnalyticsLoading(false);
-          }
-        }
-      };
-      void fetchSeoAnalytics();
-    }
+    setOverviewError(null);
+  }, [overviewQuery.error]);
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [activeTab, overviewReloadNonce, user.role]);
+  useEffect(() => {
+    if (seoAnalyticsQuery.error) {
+      console.warn('Failed to fetch SEO analytics.', seoAnalyticsQuery.error);
+    }
+  }, [seoAnalyticsQuery.error]);
 
   // Categories Handlers
   const handleCreateCategory = async (e: React.FormEvent) => {
@@ -1285,11 +1336,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             title: 'Catégorie créée',
             message: 'La nouvelle catégorie est prête dans le catalogue.'
           });
-      } catch {
-          showAdminToast({
-            type: 'error',
-            title: 'Création impossible',
-            message: "La catégorie n'a pas pu être créée. Vérifiez les champs puis réessayez."
+      } catch (error) {
+          handleApiError({
+            error,
+            fallbackMessage: "La catégorie n'a pas pu être créée. Vérifiez les champs puis réessayez.",
+            notify: (message) => showAdminToast({ type: 'error', title: 'Création impossible', message }),
+            logContext: 'Unable to create category'
           });
       }
   };
@@ -1315,11 +1367,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                 title: 'Catégorie supprimée',
                 message: 'La catégorie a été retirée du catalogue.'
               });
-          } catch {
-              showAdminToast({
-                type: 'error',
-                title: 'Suppression impossible',
-                message: "La catégorie n'a pas pu être supprimée."
+          } catch (error) {
+              handleApiError({
+                error,
+                fallbackMessage: "La catégorie n'a pas pu être supprimée.",
+                notify: (message) => showAdminToast({ type: 'error', title: 'Suppression impossible', message }),
+                logContext: `Unable to delete category ${id}`
               });
           }
         }
@@ -1345,11 +1398,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             title: 'Ordre des catégories mis à jour',
             message: 'La nouvelle position sera appliquée dans le header, la home et les pages catégorie.'
           });
-      } catch {
-          showAdminToast({
-            type: 'error',
-            title: 'Réorganisation impossible',
-            message: "L'ordre des catégories n'a pas pu être sauvegardé."
+      } catch (error) {
+          handleApiError({
+            error,
+            fallbackMessage: "L'ordre des catégories n'a pas pu être sauvegardé.",
+            notify: (message) => showAdminToast({ type: 'error', title: 'Réorganisation impossible', message }),
+            logContext: `Unable to reorder category ${categoryId}`
           });
       }
   };
@@ -1382,12 +1436,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
           title: 'Sous-catégorie mise à jour',
           message: 'Les informations de la sous-catégorie ont été enregistrées.'
         });
-    } catch (err) {
-        console.error('Update subcat fail:', err);
-        showAdminToast({
-          type: 'error',
-          title: 'Mise à jour impossible',
-          message: 'Erreur lors de la mise à jour de la sous-catégorie.'
+    } catch (error) {
+        handleApiError({
+          error,
+          fallbackMessage: 'Erreur lors de la mise à jour de la sous-catégorie.',
+          notify: (message) => showAdminToast({ type: 'error', title: 'Mise à jour impossible', message }),
+          logContext: `Unable to update subcategory ${editingSubCategory.id}`
         });
     }
   };
@@ -1418,12 +1472,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             title: 'Sous-catégorie créée',
             message: 'La nouvelle sous-catégorie est disponible.'
           });
-      } catch (err) {
-          console.error('Create subcat fail:', err);
-          showAdminToast({
-            type: 'error',
-            title: 'Création impossible',
-            message: 'Erreur lors de la création de la sous-catégorie.'
+      } catch (error) {
+          handleApiError({
+            error,
+            fallbackMessage: 'Erreur lors de la création de la sous-catégorie.',
+            notify: (message) => showAdminToast({ type: 'error', title: 'Création impossible', message }),
+            logContext: 'Unable to create subcategory'
           });
       }
   };
@@ -1454,11 +1508,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             title: 'Ordre des sous-catégories mis à jour',
             message: 'La nouvelle position sera appliquée dans la page catégorie.'
           });
-      } catch {
-          showAdminToast({
-            type: 'error',
-            title: 'Réorganisation impossible',
-            message: "L'ordre des sous-catégories n'a pas pu être sauvegardé."
+      } catch (error) {
+          handleApiError({
+            error,
+            fallbackMessage: "L'ordre des sous-catégories n'a pas pu être sauvegardé.",
+            notify: (message) => showAdminToast({ type: 'error', title: 'Réorganisation impossible', message }),
+            logContext: `Unable to reorder subcategory ${subCategoryId}`
           });
       }
   };
@@ -1477,11 +1532,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                 title: 'Sous-catégorie supprimée',
                 message: 'La sous-catégorie a été retirée.'
               });
-          } catch {
-              showAdminToast({
-                type: 'error',
-                title: 'Suppression impossible',
-                message: "La sous-catégorie n'a pas pu être supprimée."
+          } catch (error) {
+              handleApiError({
+                error,
+                fallbackMessage: "La sous-catégorie n'a pas pu être supprimée.",
+                notify: (message) => showAdminToast({ type: 'error', title: 'Suppression impossible', message }),
+                logContext: `Unable to delete subcategory ${id}`
               });
           }
         }
@@ -1507,11 +1563,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             title: 'Catégorie mise à jour',
             message: 'La photo et les informations de la catégorie ont été enregistrées avec succès.'
           });
-      } catch {
-          showAdminToast({
-            type: 'error',
-            title: 'Mise à jour impossible',
-            message: "La catégorie n'a pas pu être enregistrée. Vérifiez l'image ou réessayez."
+      } catch (error) {
+          handleApiError({
+            error,
+            fallbackMessage: "La catégorie n'a pas pu être enregistrée. Vérifiez l'image ou réessayez.",
+            notify: (message) => showAdminToast({ type: 'error', title: 'Mise à jour impossible', message }),
+            logContext: `Unable to update category ${editingCategory.id}`
           });
       }
   };
@@ -2575,6 +2632,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                       <input type="number" min={5} max={120} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={adminNotificationPollSeconds} onChange={(e) => setAdminNotificationPollSeconds(Number(e.target.value))} />
                       <p className="mt-2 text-xs text-slate-500">Minimum conseillé: 5 secondes.</p>
                     </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Relance paiements à vérifier</label>
+                      <input type="number" min={1} max={168} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={paymentReviewReminderHours} onChange={(e) => setPaymentReviewReminderHours(Number(e.target.value))} />
+                      <p className="mt-2 text-xs text-slate-500">Alerte staff WhatsApp si une preuve reste bloquée plus de X heures.</p>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Points par dinar livré</label>
+                      <input type="number" min={0} max={1000} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={loyaltyPointsPerDinar} onChange={(e) => setLoyaltyPointsPerDinar(Number(e.target.value))} />
+                      <p className="mt-2 text-xs text-slate-500">100 points = 1 TND de réduction au checkout.</p>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Plafond de réduction fidélité (%)</label>
+                      <input type="number" min={0} max={100} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={loyaltyMaxDiscountPercent} onChange={(e) => setLoyaltyMaxDiscountPercent(Number(e.target.value))} />
+                      <p className="mt-2 text-xs text-slate-500">Empêche d’utiliser plus d’un certain pourcentage du panier avec les points.</p>
+                    </div>
                   </div>
                 </div>
 
@@ -2664,7 +2736,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                           disabled={clientNotificationTargetMode !== 'selected'}
                         >
                           <option value="">Selectionner un client</option>
-                          {notificationUsers.filter((account) => account.role === UserRole.CLIENT).map((account) => (
+                          {notificationUsers.filter((account) => account.role === UserRole.USER).map((account) => (
                             <option key={account.id} value={account.id}>
                               {account.fullName || account.username} - {account.email}
                             </option>
@@ -2704,7 +2776,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                     <div className="mt-4 space-y-3">
                       <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
                         {clientNotificationTargetMode === 'all'
-                          ? `${notificationUsers.filter((account) => account.role === UserRole.CLIENT).length} clients recevront cette notification.`
+                          ? `${notificationUsers.filter((account) => account.role === UserRole.USER).length} clients recevront cette notification.`
                           : clientNotificationTargetUserId
                             ? '1 client recevra cette notification.'
                             : 'Selectionnez un client pour finaliser cet envoi.'}
@@ -2822,7 +2894,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                   <textarea className="min-h-[110px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoDescription} onChange={(e) => setSeoDescription(e.target.value)} placeholder="Meta description principale" />
                   <textarea className="min-h-[90px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoKeywords} onChange={(e) => setSeoKeywords(e.target.value)} placeholder="Mots-clés séparés par des virgules" />
                   <input className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3" value={seoCanonicalUrl} onChange={(e) => setSeoCanonicalUrl(e.target.value)} placeholder="URL canonique, ex: https://votre-domaine.com" />
-                  <ImageInput label="Image Open Graph" value={seoOgImageUrl} onChange={setSeoOgImageUrl} placeholder="Image de partage social" uploadPreset="default" />
+                  <AdminImageInput label="Image Open Graph" value={seoOgImageUrl} onChange={setSeoOgImageUrl} placeholder="Image de partage social" uploadPreset="default" />
                 </div>
               </div>
 
@@ -2881,7 +2953,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                 />
                             </div>
                             <div className="grid grid-cols-1 gap-6">
-                                <ImageInput 
+                                <AdminImageInput 
                                     label="Logo Principal"
                                     value={siteLogo}
                                     onChange={setSiteLogo}
@@ -2909,7 +2981,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                         <span>Grand</span>
                                     </div>
                                 </div>
-                                <ImageInput 
+                                <AdminImageInput 
                                     label="Favicon (Icône de l'onglet)"
                                     value={siteFavicon}
                                     onChange={setSiteFavicon}
@@ -3149,6 +3221,96 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                     </div>
                 </div>
 
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                        <div className="flex items-center space-x-2">
+                            <div className="p-2 bg-emerald-100 rounded-lg">
+                                <LucideIcons.Wallet className="text-emerald-700" size={20} />
+                            </div>
+                            <div>
+                                <h2 className="text-lg font-bold text-slate-900 leading-tight">Paiements manuels</h2>
+                                <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Checkout sans passerelle</p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={addPaymentMethodDraft}
+                            className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-indigo-600"
+                        >
+                            <LucideIcons.Plus size={14} />
+                            Ajouter
+                        </button>
+                    </div>
+                    <div className="space-y-4 p-6">
+                        {paymentMethods.map((method, index) => (
+                            <div key={`${method.id}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Identifiant</label>
+                                        <input
+                                            type="text"
+                                            className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white transition-all"
+                                            value={method.id}
+                                            onChange={(e) => updatePaymentMethodDraft(index, { id: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
+                                            placeholder="bank_transfer"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Libellé client</label>
+                                        <input
+                                            type="text"
+                                            className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white transition-all"
+                                            value={method.label}
+                                            onChange={(e) => updatePaymentMethodDraft(index, { label: e.target.value })}
+                                            placeholder="Virement bancaire"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Ordre</label>
+                                        <input
+                                            type="number"
+                                            className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white transition-all"
+                                            value={method.sortOrder || 0}
+                                            onChange={(e) => updatePaymentMethodDraft(index, { sortOrder: Number(e.target.value) || 0 })}
+                                        />
+                                    </div>
+                                    <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                                        <span className="font-bold text-slate-800">Active</span>
+                                        <input type="checkbox" className="h-5 w-5 accent-indigo-600" checked={method.isActive} onChange={(e) => updatePaymentMethodDraft(index, { isActive: e.target.checked })} />
+                                    </label>
+                                    <div className="md:col-span-2">
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Instructions client</label>
+                                        <textarea
+                                            className="min-h-[110px] w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white transition-all"
+                                            value={method.instructions}
+                                            onChange={(e) => updatePaymentMethodDraft(index, { instructions: e.target.value })}
+                                            placeholder="Etapes de paiement + ce que le client doit envoyer ensuite."
+                                        />
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Coordonnées / RIB / Numéro</label>
+                                        <textarea
+                                            className="min-h-[110px] w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white transition-all"
+                                            value={method.accountDetails}
+                                            onChange={(e) => updatePaymentMethodDraft(index, { accountDetails: e.target.value })}
+                                            placeholder="Titulaire, RIB, numéro D17, compte Flouci..."
+                                        />
+                                    </div>
+                                </div>
+                                <div className="mt-4 flex justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={() => removePaymentMethodDraft(index)}
+                                        className="rounded-xl border border-red-200 px-4 py-2 text-xs font-black text-red-700 hover:bg-red-50"
+                                    >
+                                        Supprimer
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
                 <div className="flex justify-end pt-6 sticky bottom-0 bg-slate-50/80 backdrop-blur-md p-4 -mx-4 rounded-t-3xl border-t border-slate-200 z-10">
                     <button 
                         onClick={() => onUpdateSiteConfig({ 
@@ -3164,6 +3326,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                             smtpEmailId,
                             smtpEncryption,
                             smtpPassword,
+                            paymentMethods,
                             click2payEnabled,
                             click2payMerchantId,
                             click2payApiKey
@@ -3287,7 +3450,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                         </div>
                                         <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-[1fr_1.1fr]">
                                             <div className="space-y-4">
-                                                <ImageInput
+                                                <AdminImageInput
                                                     label="Image carte"
                                                     value={banner.imageUrl}
                                                     onChange={(value) => updateHeroPromoBanner(banner.id, { imageUrl: value })}
@@ -3538,7 +3701,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                     </div>
                                     <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-[1fr_1.1fr]">
                                         <div className="space-y-4">
-                                            <ImageInput
+                                            <AdminImageInput
                                                 label="Logo / image marque"
                                                 value={card.imageUrl}
                                                 onChange={(value) => updateFloatingBrandCard(card.id, { imageUrl: value })}
@@ -3624,7 +3787,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                     <div className="p-6 space-y-6">
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
                             <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_1.2fr]">
-                                <ImageInput
+                                <AdminImageInput
                                     label="Background de la cover"
                                     value={coverBackgroundUrl}
                                     onChange={setCoverBackgroundUrl}
@@ -3704,7 +3867,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                     </div>
                     <div className="p-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
                         <div className="space-y-5">
-                            <ImageInput
+                            <AdminImageInput
                                 label="Image ou GIF du loader"
                                 value={startupLoaderImageUrl}
                                 onChange={setStartupLoaderImageUrl}
@@ -4016,13 +4179,97 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                         <input value={footerWhatsapp} onChange={(e) => setFooterWhatsapp(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
                                     </div>
                                     <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Numéro WhatsApp du store</label>
+                                        <input value={whatsappContactNumber} onChange={(e) => setWhatsappContactNumber(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" placeholder="+216..." />
+                                    </div>
+                                    <div>
                                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Adresse</label>
                                         <input value={footerAddress} onChange={(e) => setFooterAddress(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
                                     </div>
                                 </div>
+                                <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm font-semibold text-slate-700">
+                                    <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={whatsappFloatingButtonEnabled} onChange={(e) => setWhatsappFloatingButtonEnabled(e.target.checked)} />
+                                    Activer le bouton WhatsApp flottant sur tout le store
+                                </label>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Copyright</label>
                                     <input value={footerCopyright} onChange={(e) => setFooterCopyright(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                                    <div className="text-xs font-black uppercase tracking-widest text-slate-500">Pages statiques éditables</div>
+                                    <p className="mt-2 text-sm leading-6 text-slate-600">Ces contenus alimentent directement les routes publiques <code>/cgv</code>, <code>/remboursement</code>, <code>/comment-ca-marche</code> et <code>/faq</code>.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Titre page CGV</label>
+                                    <input value={cgvPageTitle} onChange={(e) => setCgvPageTitle(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
+                                </div>
+                                <RichTextEditor label="Contenu page CGV" value={cgvPageContent} onChange={setCgvPageContent} />
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Titre page remboursement</label>
+                                    <input value={refundPageTitle} onChange={(e) => setRefundPageTitle(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
+                                </div>
+                                <RichTextEditor label="Contenu page remboursement" value={refundPageContent} onChange={setRefundPageContent} />
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Titre page comment ça marche</label>
+                                    <input value={howItWorksPageTitle} onChange={(e) => setHowItWorksPageTitle(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
+                                </div>
+                                <RichTextEditor label="Contenu page comment ça marche" value={howItWorksPageContent} onChange={setHowItWorksPageContent} />
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Titre FAQ</label>
+                                    <input value={faqPageTitle} onChange={(e) => setFaqPageTitle(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Intro FAQ</label>
+                                    <textarea value={faqPageIntro} onChange={(e) => setFaqPageIntro(e.target.value)} className="theme-focus h-28 w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
+                                </div>
+                                <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="text-sm font-black text-slate-900">Questions FAQ</div>
+                                            <div className="text-xs text-slate-500">Chaque entrée alimente la page publique et le balisage schema.org FAQPage.</div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFaqItems((current) => [...current, { question: 'Nouvelle question', answer: '<p>Ajoutez ici la réponse.</p>' }])}
+                                            className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-slate-800"
+                                        >
+                                            <Plus size={14} />
+                                            Ajouter
+                                        </button>
+                                    </div>
+                                    {faqItems.map((item, index) => (
+                                        <div key={`${index}-${item.question}`} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                                            <div className="mb-3 flex items-center justify-between gap-3">
+                                                <div className="text-xs font-black uppercase tracking-widest text-slate-500">Question {index + 1}</div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setFaqItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                                                    className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 hover:bg-red-100"
+                                                >
+                                                    <Trash2 size={14} />
+                                                    Supprimer
+                                                </button>
+                                            </div>
+                                            <input
+                                                value={item.question}
+                                                onChange={(e) => setFaqItems((current) => current.map((entry, currentIndex) => currentIndex === index ? { ...entry, question: e.target.value } : entry))}
+                                                className="theme-focus mb-4 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700"
+                                            />
+                                            <RichTextEditor
+                                                label={`Réponse FAQ ${index + 1}`}
+                                                value={item.answer}
+                                                onChange={(value) => setFaqItems((current) => current.map((entry, currentIndex) => currentIndex === index ? { ...entry, answer: value } : entry))}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Emetteur facture</label>
+                                    <input value={invoiceIssuerName} onChange={(e) => setInvoiceIssuerName(e.target.value)} className="theme-focus w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Mentions legales facture</label>
+                                    <textarea value={invoiceLegalMentions} onChange={(e) => setInvoiceLegalMentions(e.target.value)} className="theme-focus h-32 w-full rounded-xl border border-slate-200 bg-slate-50/30 px-4 py-3 font-medium text-slate-700" />
                                 </div>
                             </div>
                             <div className="relative overflow-hidden rounded-[28px] border border-slate-800 bg-slate-950 p-6 text-white shadow-xl">
@@ -4045,6 +4292,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                                             <div>{footerEmail}</div>
                                             <div>{footerPhone}</div>
                                             <div>WhatsApp: {footerWhatsapp}</div>
+                                            <div>Store WhatsApp: {whatsappContactNumber}</div>
                                             <div>{footerAddress}</div>
                                         </div>
                                     </div>
@@ -4081,12 +4329,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
                           headerCtaLabel,
                           footerTagline,
                           footerDescription,
-                          footerEmail,
-                          footerPhone,
-                          footerWhatsapp,
-                          footerAddress,
-                          footerCopyright
-                        })}
+                                          footerEmail,
+                                          footerPhone,
+                                          footerWhatsapp,
+                                          whatsappContactNumber,
+                                          whatsappFloatingButtonEnabled,
+                                          footerAddress,
+                                          footerCopyright,
+                                          cgvPageTitle,
+                                          cgvPageContent: sanitizeRichText(cgvPageContent),
+                                          refundPageTitle,
+                                          refundPageContent: sanitizeRichText(refundPageContent),
+                                          howItWorksPageTitle,
+                                          howItWorksPageContent: sanitizeRichText(howItWorksPageContent),
+                                          faqPageTitle,
+                                          faqPageIntro,
+                                          faqItems: faqItems
+                                            .map((item) => ({
+                                              question: item.question.trim(),
+                                              answer: sanitizeRichText(item.answer)
+                                            }))
+                                            .filter((item) => item.question && item.answer && richTextToPlainText(item.answer).trim()),
+                                          invoiceIssuerName,
+                                          invoiceLegalMentions
+                                        })}
                         className="bg-indigo-600 text-white font-black py-4 px-16 rounded-2xl hover:bg-indigo-700 transition shadow-2xl shadow-indigo-300 flex items-center justify-center transform hover:-translate-y-1 active:scale-95 group"
                     >
                         <LucideIcons.Save size={20} className="mr-3 group-hover:rotate-12 transition-transform" />
@@ -4207,7 +4473,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             DynamicIcon={DynamicIcon}
             IconPicker={IconPicker}
             SubCategoryIconPicker={SubCategoryIconPicker}
-            ImageInput={ImageInput}
+            ImageInput={AdminImageInput}
             setEditingCategory={setEditingCategory}
             setEditingSubCategory={setEditingSubCategory}
             setEditCatName={setEditCatName}
@@ -4254,16 +4520,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
         )}
         {activeTab === 'orders' && (
           <AdminOrdersSection
-            orders={orders}
-            orderFilter={orderFilter}
-            orderSearch={orderSearch}
-            orderSort={orderSort}
             expandedOrderId={expandedOrderId}
             deliveryDrafts={deliveryDrafts}
             setExpandedOrderId={setExpandedOrderId}
-            setOrderFilter={setOrderFilter}
-            setOrderSearch={setOrderSearch}
-            setOrderSort={setOrderSort}
             setDeliveryDrafts={setDeliveryDrafts}
             onUpdateStatus={onUpdateStatus}
             onAdminOrderAction={onAdminOrderAction}
@@ -4280,6 +4539,327 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ orders, listings
             ORDER_STATUS_LABELS={ORDER_STATUS_LABELS}
             ORDER_STATUS_STEPS={ORDER_STATUS_STEPS}
           />
+        )}
+        {activeTab === 'reviews' && <AdminReviewsSection />}
+        {activeTab === 'coupons' && (
+          <AdminCouponsSection onNotify={showAdminToast} />
+        )}
+        {activeTab === 'create' && (
+          <form onSubmit={handleSubmitListing} className="space-y-6">
+            <div className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.22em] text-indigo-600">
+                    {editingListing ? 'Edition produit' : 'Nouveau produit'}
+                  </div>
+                  <h2 className="mt-2 text-2xl font-black text-slate-900">
+                    {editingListing ? `Modifier ${editingListing.title}` : 'Ajouter un produit au catalogue'}
+                  </h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                    Renseignez les informations principales du produit, ses règles de livraison et les contenus marketing.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={openDraftPreview}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Voir aperçu
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetListingForm();
+                      requestAdminTab('listings');
+                    }}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Annuler
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+              <div className="space-y-6">
+                <div className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="text-lg font-black text-slate-900">Informations produit</h3>
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Titre</label>
+                      <input value={newListingTitle} onChange={(e) => setNewListingTitle(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="Ex: Netflix Premium 1 mois" />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Game / univers</label>
+                      <input value={newListingGame} onChange={(e) => setNewListingGame(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="Ex: Streaming, IA, Gaming" />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Catégorie</label>
+                      <select value={newListingCatId} onChange={(e) => { setNewListingCatId(e.target.value); setNewListingSubCatId(''); }} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700">
+                        <option value="">Sélectionner une catégorie</option>
+                        {orderedCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Sous-catégorie</label>
+                      <select value={newListingSubCatId} onChange={(e) => setNewListingSubCatId(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700">
+                        <option value="">Aucune sous-catégorie</option>
+                        {(selectedCategoryObj?.subCategories || []).map((sub) => <option key={sub.id} value={sub.id}>{sub.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Prix (TND)</label>
+                      <input value={newListingPrice} onChange={(e) => setNewListingPrice(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Type de remise</label>
+                      <select value={newListingDiscountType} onChange={(e) => setNewListingDiscountType(e.target.value as DiscountType)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700">
+                        <option value={DiscountType.NONE}>Aucune</option>
+                        <option value={DiscountType.PERCENT}>Pourcentage</option>
+                        <option value={DiscountType.AMOUNT}>Montant fixe</option>
+                      </select>
+                    </div>
+                    {newListingDiscountType !== DiscountType.NONE && (
+                      <div>
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Valeur remise</label>
+                        <input value={newListingDiscount} onChange={(e) => setNewListingDiscount(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" />
+                      </div>
+                    )}
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Plateforme</label>
+                      <input value={newListingPlatform} onChange={(e) => setNewListingPlatform(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="Windows, PlayStation, Web..." />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Région</label>
+                      <input value={newListingRegion} onChange={(e) => setNewListingRegion(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Pays activation</label>
+                      <input value={newListingActivationCountry} onChange={(e) => setNewListingActivationCountry(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" />
+                    </div>
+                    {user.role === UserRole.ADMIN && (
+                      <div>
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Source fournisseur</label>
+                        <input value={newListingSource} onChange={(e) => setNewListingSource(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="https://..." />
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-5 flex flex-wrap gap-4">
+                    <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                      <input type="checkbox" checked={newListingIsInstant} onChange={(e) => setNewListingIsInstant(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
+                      Livraison instantanée
+                    </label>
+                    <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                      <input type="checkbox" checked={newListingIsPackage} onChange={(e) => setNewListingIsPackage(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
+                      Produit packagé
+                    </label>
+                  </div>
+                  {!newListingIsInstant && (
+                    <div className="mt-4">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Temps de préparation</label>
+                      <input value={newListingPrepTime} onChange={(e) => setNewListingPrepTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="Ex: 1h à 3h" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="text-lg font-black text-slate-900">Médias</h3>
+                  <div className="mt-5 grid gap-5 md:grid-cols-2">
+                    <AdminImageInput label="Image principale" value={newListingImageUrl} onChange={setNewListingImageUrl} placeholder="Image produit" uploadPreset="default" />
+                    <AdminImageInput label="Logo marque" value={newListingLogoUrl} onChange={setNewListingLogoUrl} placeholder="Logo optionnel" uploadPreset="default" />
+                  </div>
+                  <div className="mt-5">
+                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Galerie</label>
+                    <textarea value={newListingGallery} onChange={(e) => setNewListingGallery(e.target.value)} className="h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="URLs séparées par des virgules" />
+                  </div>
+                </div>
+
+                <div className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-black text-slate-900">Description</h3>
+                    <button type="button" onClick={handleGenerateDescription} disabled={isGenerating} className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-slate-800 disabled:opacity-60">
+                      {isGenerating ? 'Génération...' : 'Générer'}
+                    </button>
+                  </div>
+                  <div className="mt-5">
+                    <RichTextEditor label="Description produit" value={generatedDescription} onChange={setGeneratedDescription} />
+                  </div>
+                </div>
+
+                <div className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="text-lg font-black text-slate-900">Livraison & contenu</h3>
+                  {!newListingIsPackage && (
+                    <div className="mt-5 space-y-5">
+                      <div>
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Type produit</label>
+                        <select value={newListingProductType} onChange={(e) => setNewListingProductType(e.target.value as ProductType)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700">
+                          <option value={ProductType.STANDARD}>Standard</option>
+                          <option value={ProductType.KEY}>Clé / code</option>
+                          <option value={ProductType.LOGIN_CREDENTIALS}>Compte / identifiants</option>
+                        </select>
+                      </div>
+
+                      {newListingProductType === ProductType.KEY && (
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Clé statique</label>
+                          <textarea value={newListingStaticKey} onChange={(e) => setNewListingStaticKey(e.target.value)} className="h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="Ex: XXXXX-XXXXX-XXXXX" />
+                        </div>
+                      )}
+
+                      {newListingProductType === ProductType.LOGIN_CREDENTIALS && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-sm font-black text-slate-900">Identifiants disponibles</div>
+                            <button type="button" onClick={addCredentialField} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">Ajouter</button>
+                          </div>
+                          {newListingCredentials.map((credential, index) => (
+                            <div key={`credential-${index}`} className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                              <input value={credential.username} onChange={(e) => updateCredentialField(index, 'username', e.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="Email / username" />
+                              <input value={credential.password || ''} onChange={(e) => updateCredentialField(index, 'password', e.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" placeholder="Password" />
+                              <button type="button" onClick={() => removeCredentialField(index)} className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black text-red-700 hover:bg-red-100">Supprimer</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-black text-slate-900">Variantes</div>
+                            <div className="text-xs text-slate-500">Ajoutez des offres avec prix dédiés.</div>
+                          </div>
+                          <button type="button" onClick={addListingVariant} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">Ajouter</button>
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Label des variantes</label>
+                          <input value={newListingVariantLabel} onChange={(e) => setNewListingVariantLabel(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700" placeholder="Ex: Durée, Pack, Niveau" />
+                        </div>
+                        {newListingVariants.map((variant, index) => (
+                          <div key={`variant-${index}`} className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
+                            <input value={variant.name} onChange={(e) => updateListingVariant(index, { name: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700" placeholder="Nom variante" />
+                            <input value={variant.price} onChange={(e) => updateListingVariant(index, { price: Number(e.target.value) })} type="number" min="0" step="0.01" className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700" placeholder="Prix" />
+                            <button type="button" onClick={() => removeListingVariant(index)} className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black text-red-700 hover:bg-red-100">Supprimer</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {newListingIsPackage && (
+                    <div className="mt-5 space-y-4">
+                      <div className="text-sm font-black text-slate-900">Produits inclus</div>
+                      <div className="grid gap-3">
+                        {availablePackageListings.map((listing) => {
+                          const selectedItem = newListingPackageItems.find((item) => item.includedListingId === listing.id);
+                          return (
+                            <label key={listing.id} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-between">
+                              <div className="flex items-center gap-3">
+                                <input type="checkbox" checked={Boolean(selectedItem)} onChange={() => togglePackageItem(listing.id)} className="h-4 w-4 accent-indigo-600" />
+                                <div>
+                                  <div className="font-bold text-slate-900">{listing.title}</div>
+                                  <div className="text-xs text-slate-500">{getListingFinalPrice(listing).toFixed(2)} TND</div>
+                                </div>
+                              </div>
+                              {selectedItem && (
+                                <input type="number" min="1" step="1" value={selectedItem.quantity} onChange={(e) => updatePackageItemQuantity(listing.id, Number(e.target.value))} className="w-28 rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700" />
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="text-lg font-black text-slate-900">SEO & contenu avancé</h3>
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Meta title</label>
+                      <input value={newListingMetaTitle} onChange={(e) => setNewListingMetaTitle(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Keywords</label>
+                      <input value={newListingKeywords} onChange={(e) => setNewListingKeywords(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Meta description</label>
+                      <textarea value={newListingMetaDesc} onChange={(e) => setNewListingMetaDesc(e.target.value)} className="h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-medium text-slate-700" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div id="listing-live-preview" className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Aperçu live</div>
+                  <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-slate-950 text-white">
+                    <div className="aspect-[4/3] bg-slate-900">
+                      {draftListingPreview.imageUrl ? (
+                        <img src={draftListingPreview.imageUrl} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-sm font-bold text-slate-500">Image produit</div>
+                      )}
+                    </div>
+                    <div className="space-y-3 p-5">
+                      <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">{selectedCategoryName}</div>
+                      <div className="text-xl font-black">{draftListingPreview.title}</div>
+                      <div className="text-sm text-slate-300">{draftListingPreview.subtitle}</div>
+                      <div className="flex items-center justify-between gap-3 pt-2">
+                        <div>
+                          {draftListingPreview.discountType !== DiscountType.NONE && (
+                            <div className="text-xs text-slate-500 line-through">{draftListingPreview.price.toFixed(2)} TND</div>
+                          )}
+                          <div className="text-2xl font-black text-white">
+                            {getListingFinalPrice({
+                              price: draftListingPreview.price,
+                              discountType: draftListingPreview.discountType,
+                              discountValue: draftListingPreview.discountValue,
+                              discountPercent: draftListingPreview.discountType === DiscountType.PERCENT ? draftListingPreview.discountValue : 0
+                            }).toFixed(2)} TND
+                          </div>
+                        </div>
+                        <div className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${draftListingPreview.isInstant ? 'bg-emerald-500/20 text-emerald-200' : 'bg-amber-500/20 text-amber-200'}`}>
+                          {draftListingPreview.isInstant ? 'Instant' : 'Manuel'}
+                        </div>
+                      </div>
+                      <div className="text-xs text-slate-500">Slug aperçu: /product/{draftProductSlug}</div>
+                      {newListingIsPackage && (
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-200">
+                          <div className="font-black text-white">Pack</div>
+                          <div className="mt-2">Valeur originale: {packageOriginalTotal.toFixed(2)} TND</div>
+                          <div>Prix pack: {draftPackagePrice.toFixed(2)} TND</div>
+                          <div>Economie: {packageSavings.toFixed(2)} TND</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <AdminStickyActionBar
+                  note={editingListing ? 'Les modifications remplaceront la fiche existante.' : 'Le produit sera ajouté au catalogue après validation.'}
+                  actions={(
+                    <>
+                      <button
+                        type="button"
+                        onClick={resetListingForm}
+                        className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        Réinitialiser
+                      </button>
+                      <button
+                        type="submit"
+                        className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-black text-white hover:bg-indigo-700"
+                      >
+                        {editingListing ? 'Enregistrer le produit' : 'Créer le produit'}
+                      </button>
+                    </>
+                  )}
+                />
+              </div>
+            </div>
+          </form>
         )}
         {activeTab === 'listings' && (
           <AdminListingsSection
@@ -4353,15 +4933,22 @@ export const UserDashboard: React.FC<{
   user: User;
   orders: Order[];
   notifications: ClientNotification[];
+  loyaltySummary?: LoyaltySummary | null;
   navigateTo: (page: string) => void;
   onMarkNotificationRead: (notificationId: string) => void;
   onMarkAllNotificationsRead: () => void;
-}> = ({ user, orders, notifications, navigateTo, onMarkNotificationRead, onMarkAllNotificationsRead }) => {
+}> = ({ user, orders, notifications, loyaltySummary, navigateTo, onMarkNotificationRead, onMarkAllNotificationsRead }) => {
+  const queryClient = useQueryClient();
   const sortedOrders = [...orders].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const unreadNotifications = notifications.filter((notification) => !notification.read);
   const [deliveryByOrder, setDeliveryByOrder] = useState<Record<string, Array<{ id: string; deliveryContent: string; deliveryType: string; activationGuide?: string; restrictions?: string; region?: string }>>>({});
   const [deliveryLoadingId, setDeliveryLoadingId] = useState<string | null>(null);
   const [deliveryError, setDeliveryError] = useState<Record<string, string>>({});
+  const [invoiceLoadingId, setInvoiceLoadingId] = useState<string | null>(null);
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, { rating: number; comment: string }>>({});
+  const [submittedReviews, setSubmittedReviews] = useState<Record<string, Review>>({});
+  const [reviewSubmittingItemId, setReviewSubmittingItemId] = useState<string | null>(null);
+  const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({});
 
   const loadDelivery = async (order: Order) => {
     setDeliveryLoadingId(order.id);
@@ -4376,6 +4963,63 @@ export const UserDashboard: React.FC<{
       }));
     } finally {
       setDeliveryLoadingId(null);
+    }
+  };
+
+  const downloadInvoice = async (order: Order) => {
+    if (!order.invoice) return;
+
+    setInvoiceLoadingId(order.id);
+    setDeliveryError((current) => ({ ...current, [order.id]: '' }));
+    try {
+      const blob = await api.downloadOrderInvoicePdf(order.id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${order.invoice.invoiceNumber || order.orderNumber}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      setDeliveryError((current) => ({
+        ...current,
+        [order.id]: error instanceof Error ? error.message : 'Impossible de telecharger la facture.'
+      }));
+    } finally {
+      setInvoiceLoadingId(null);
+    }
+  };
+
+  const submitReview = async (order: Order, item: OrderItem) => {
+    const draft = reviewDrafts[item.id] || { rating: 0, comment: '' };
+    if (!draft.rating || !draft.comment.trim()) {
+      setReviewErrors((current) => ({ ...current, [item.id]: 'Choisissez une note et ajoutez un commentaire.' }));
+      return;
+    }
+
+    setReviewSubmittingItemId(item.id);
+    setReviewErrors((current) => ({ ...current, [item.id]: '' }));
+    try {
+      const review = await api.createReview({
+        listingId: item.listingId,
+        orderId: order.id,
+        rating: draft.rating,
+        comment: draft.comment.trim()
+      });
+      setSubmittedReviews((current) => ({ ...current, [item.id]: review }));
+      setReviewDrafts((current) => ({ ...current, [item.id]: { rating: 0, comment: '' } }));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.orders.my }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.productsCatalog })
+      ]);
+    } catch (error) {
+      setReviewErrors((current) => ({
+        ...current,
+        [item.id]: error instanceof Error ? error.message : "Impossible d'envoyer l'avis."
+      }));
+    } finally {
+      setReviewSubmittingItemId(null);
     }
   };
 
@@ -4407,6 +5051,26 @@ export const UserDashboard: React.FC<{
               <button className="text-[10px] font-bold uppercase bg-white text-indigo-600 px-2 py-1 rounded">Recharger</button>
             </div>
           </div>
+
+          {loyaltySummary && (
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <div className="text-xs font-bold uppercase tracking-wider text-emerald-600 mb-1">Fidélité</div>
+              <div className="text-3xl font-black text-slate-900">{loyaltySummary.balance} pts</div>
+              <p className="mt-2 text-sm text-slate-500">
+                Valeur utilisable: {loyaltySummary.redeemableAmount.toFixed(2)} TND
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                <div className="rounded-xl bg-emerald-50 px-3 py-3 text-emerald-800">
+                  <div className="font-black">{loyaltySummary.pointsPerDinar} pts</div>
+                  <div className="mt-1">par dinar livré</div>
+                </div>
+                <div className="rounded-xl bg-slate-100 px-3 py-3 text-slate-700">
+                  <div className="font-black">{loyaltySummary.maxDiscountPercent}%</div>
+                  <div className="mt-1">plafond checkout</div>
+                </div>
+              </div>
+            </div>
+          )}
           
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <h3 className="font-bold text-slate-900 mb-4 flex items-center">
@@ -4468,6 +5132,25 @@ export const UserDashboard: React.FC<{
         </div>
 
         <div className="md:col-span-2 space-y-4">
+          {loyaltySummary && loyaltySummary.history.length > 0 && (
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h2 className="font-black text-xl text-slate-900">Historique des points</h2>
+              <div className="mt-4 space-y-3">
+                {loyaltySummary.history.slice(0, 8).map((entry) => (
+                  <div key={entry.id} className="flex items-start justify-between gap-4 rounded-xl border border-slate-100 px-4 py-3">
+                    <div>
+                      <div className="text-sm font-bold text-slate-900">{entry.description || entry.type}</div>
+                      <div className="mt-1 text-xs text-slate-500">{new Date(entry.createdAt).toLocaleString()}</div>
+                    </div>
+                    <div className={`text-sm font-black ${entry.points >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {entry.points >= 0 ? '+' : ''}{entry.points} pts
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <h2 className="font-black text-xl text-slate-900 flex items-center">
             <History size={20} className="mr-2 text-indigo-600" /> Historique des Commandes
           </h2>
@@ -4476,14 +5159,27 @@ export const UserDashboard: React.FC<{
                <div key={o.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-all hover:shadow-md">
                   <div className="flex-1 w-full">
                      <div className="text-[10px] font-bold text-indigo-600 uppercase mb-1 tracking-widest">{o.orderNumber}</div>
-                     {o.invoice?.invoiceNumber && <div className="text-[11px] text-slate-400">Facture: {o.invoice.invoiceNumber}</div>}
+                     {o.invoice?.invoiceNumber && (
+                       <div className="mt-2 flex flex-wrap items-center gap-3">
+                         <div className="text-[11px] text-slate-400">Facture: {o.invoice.invoiceNumber}</div>
+                         <button
+                           type="button"
+                           onClick={() => downloadInvoice(o)}
+                           disabled={invoiceLoadingId === o.id}
+                           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-black text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                         >
+                           <Download size={13} />
+                           {invoiceLoadingId === o.id ? 'Téléchargement...' : 'Télécharger la facture'}
+                         </button>
+                       </div>
+                     )}
                      <h3 className="font-bold text-slate-900 text-lg">{o.items?.[0]?.titleSnapshot || 'Commande'}</h3>
                      <div className="mt-2 flex flex-wrap gap-2">
                        <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${getOrderStatusClasses(o.status)}`}>
                          {ORDER_STATUS_LABELS[o.status] || o.status}
                        </span>
                        {o.payments?.[0] && (
-                         <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${o.payments[0].status === 'APPROVED' ? 'bg-emerald-100 text-emerald-700' : o.payments[0].status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                         <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${['APPROVED', 'PAID'].includes(o.payments[0].status) ? 'bg-emerald-100 text-emerald-700' : o.payments[0].status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
                            Paiement {o.payments[0].status === 'SUBMITTED' ? 'en cours de traitement' : o.payments[0].status}
                          </span>
                        )}
@@ -4505,6 +5201,61 @@ export const UserDashboard: React.FC<{
                          );
                        })}
                      </div>
+                     {[OrderStatus.DELIVERED, OrderStatus.COMPLETED].includes(o.status) && (
+                       <div className="mt-5 space-y-3 rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
+                         <div className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">Vos avis</div>
+                         {o.items.map((item) => {
+                           const currentReview = item.review || submittedReviews[item.id] || null;
+                           const draft = reviewDrafts[item.id] || { rating: 0, comment: '' };
+
+                           return (
+                             <div key={item.id} className="rounded-2xl border border-white/70 bg-white p-4">
+                               <div className="font-bold text-slate-900">{item.titleSnapshot}</div>
+                               {currentReview ? (
+                                 <div className="mt-3 space-y-2">
+                                   <div className="flex items-center gap-2">
+                                     <StarRating rating={currentReview.rating} size={14} />
+                                     <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${currentReview.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : currentReview.status === 'REJECTED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                                       {currentReview.status === 'APPROVED' ? 'Publié' : currentReview.status === 'REJECTED' ? 'Refusé' : 'En modération'}
+                                     </span>
+                                   </div>
+                                   <p className="text-sm leading-6 text-slate-600">{currentReview.comment}</p>
+                                 </div>
+                               ) : (
+                                 <div className="mt-3 space-y-3">
+                                   <StarRating
+                                     rating={draft.rating}
+                                     size={18}
+                                     onChange={(rating) => setReviewDrafts((current) => ({
+                                       ...current,
+                                       [item.id]: { ...draft, rating }
+                                     }))}
+                                   />
+                                   <textarea
+                                     value={draft.comment}
+                                     onChange={(event) => setReviewDrafts((current) => ({
+                                       ...current,
+                                       [item.id]: { ...draft, comment: event.target.value }
+                                     }))}
+                                     placeholder="Partagez votre expérience sur ce produit..."
+                                     className="min-h-[110px] w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700 outline-none focus:border-indigo-500"
+                                   />
+                                   {reviewErrors[item.id] && <div className="text-xs font-semibold text-red-600">{reviewErrors[item.id]}</div>}
+                                   <button
+                                     type="button"
+                                     onClick={() => void submitReview(o, item)}
+                                     disabled={reviewSubmittingItemId === item.id}
+                                     className="rounded-xl bg-slate-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white hover:bg-black disabled:opacity-60"
+                                   >
+                                     {reviewSubmittingItemId === item.id ? "Envoi de l'avis..." : 'Envoyer pour modération'}
+                                   </button>
+                                 </div>
+                               )}
+                             </div>
+                           );
+                         })}
+                       </div>
+                     )}
                   </div>
                   
                   {o.items?.[0]?.deliveredContent && (

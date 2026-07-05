@@ -2,11 +2,16 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
 import prisma from '../prisma.js';
-import { clearUserCart, createCheckoutOrder } from '../services/checkoutService.js';
-import { notifyClientOrderStatus, serializeClientNotification } from '../services/clientNotificationService.js';
-import { sendOrderConfirmationEmail } from '../services/orderEmailService.js';
+import { clearUserCart, createCheckoutOrder, submitPaymentProofForOrder } from '../services/checkoutService.js';
+import { validateCouponForSubtotal } from '../services/couponService.js';
+import { getOrderStatusNotificationContent, notifyClientOrderStatus } from '../services/clientNotificationService.js';
+import { notifyStaff } from '../services/notificationService.js';
+import { sendOrderConfirmationEmail, sendOrderStatusUpdateEmail } from '../services/orderEmailService.js';
 import { notifyNewOrder } from '../services/orderNotificationService.js';
 import { decryptDeliveryContent } from '../services/deliverySecurityService.js';
+import { sendWhatsappWebhookEvent } from '../services/whatsappBotService.js';
+import { assertInvoiceAccess, generateInvoicePdfBufferForOrder, getInvoiceOrderById } from '../services/invoicePdfService.js';
+import logger from '../logger.js';
 
 interface AuthRequest extends Request {
   user?: {
@@ -47,7 +52,11 @@ const serializeOrder = <T extends {
         buyer: order.user || null,
         buyerDisplayName: buyerName,
         invoice: order.invoice || null,
-        deliveries: (order.deliveries || []).map(({ deliveryContentEncrypted, ...delivery }) => delivery),
+        deliveries: (order.deliveries || []).map((delivery) => {
+            const nextDelivery = { ...delivery };
+            delete (nextDelivery as { deliveryContentEncrypted?: unknown }).deliveryContentEncrypted;
+            return nextDelivery;
+        }),
         actionLogs: order.actionLogs || []
     };
 };
@@ -58,6 +67,64 @@ const requestMeta = (req: Request) => ({
 });
 
 const hashToken = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+
+const logNotificationFailure = (event: string, error: unknown, details: Record<string, unknown>) => {
+    logger.error({ event, ...details, err: error }, 'notification_event_failed');
+};
+
+const buildOrderStatusHistory = (order: {
+    createdAt: Date;
+    status: string;
+    paymentConfirmedAt?: Date | null;
+    deliveries?: Array<{ sentAt?: Date | null }>;
+    actionLogs?: Array<{ action: string; createdAt: Date; metadata?: Record<string, unknown> | null }>;
+}) => {
+    const actionLogs = order.actionLogs || [];
+    const paymentLog = actionLogs.find((log) =>
+        log.action === 'PAYMENT_PROOF_SUBMITTED'
+        || log.action === 'PAYMENT_APPROVED'
+        || (log.action === 'ORDER_STATUS_UPDATED' && ['PAYMENT_RECEIVED', 'PAYMENT_APPROVED', 'PAID'].includes(String((log.metadata as any)?.status || '')))
+    );
+    const deliveryLog = actionLogs.find((log) => log.action === 'DELIVERY_SENT');
+
+    const entries = [
+        {
+            key: 'received',
+            label: 'Commande recue',
+            status: order.status,
+            state: 'done',
+            happenedAt: order.createdAt,
+            description: 'Votre commande a ete enregistree et attend le traitement du paiement.'
+        },
+        {
+            key: 'payment_verified',
+            label: 'Paiement verifie',
+            status: ['PAYMENT_RECEIVED', 'PAYMENT_APPROVED', 'PAID', 'IN_DELIVERY', 'DELIVERED', 'COMPLETED'].includes(order.status) ? order.status : 'PENDING',
+            state: ['PAYMENT_RECEIVED', 'PAYMENT_APPROVED', 'PAID', 'IN_DELIVERY', 'DELIVERED', 'COMPLETED'].includes(order.status)
+                ? 'done'
+                : ['PAYMENT_UNDER_REVIEW', 'PENDING_PAYMENT', 'PAYMENT_REJECTED', 'CANCELLED', 'REFUNDED'].includes(order.status)
+                    ? 'current'
+                    : 'upcoming',
+            happenedAt: paymentLog?.createdAt || order.paymentConfirmedAt || null,
+            description: 'Verification manuelle du paiement par notre equipe.'
+        },
+        {
+            key: 'delivered',
+            label: 'Commande livree',
+            status: ['DELIVERED', 'COMPLETED'].includes(order.status) ? order.status : 'PENDING',
+            state: ['DELIVERED', 'COMPLETED'].includes(order.status) ? 'done' : ['IN_DELIVERY', 'PAID', 'PAYMENT_APPROVED'].includes(order.status) ? 'current' : 'upcoming',
+            happenedAt: deliveryLog?.createdAt || order.deliveries?.find((delivery) => delivery.sentAt)?.sentAt || null,
+            description: 'Votre contenu digital est pret et accessible.'
+        }
+    ];
+
+    return entries;
+};
+
+const serializeTrackedOrder = (order: any) => ({
+    ...serializeOrder(order),
+    statusHistory: buildOrderStatusHistory(order)
+});
 
 /**
  * @swagger
@@ -195,6 +262,8 @@ export const checkout = async (req: AuthRequest, res: Response) => {
             email: user.email,
             phone: user.phone || req.body.phone || '+216',
             paymentMethod: req.body.paymentMethod,
+            useLoyaltyPoints: req.body.useLoyaltyPoints,
+            couponCode: req.body.couponCode,
             customerReference: req.body.customerReference,
             paymentProof: req.body.paymentProof,
             idempotencyKey: req.body.idempotencyKey || req.headers['idempotency-key']?.toString(),
@@ -206,6 +275,25 @@ export const checkout = async (req: AuthRequest, res: Response) => {
 
         await clearUserCart(user.id);
         await notifyNewOrder(order);
+        try {
+            await notifyStaff({
+                type: 'ORDER_CREATED',
+                title: 'Nouvelle commande a traiter',
+                message: `La commande ${order.orderNumber} vient d'etre creee et attend un traitement.`,
+                metadata: {
+                    orderNumber: order.orderNumber,
+                    amount: order.amount,
+                    currency: order.currency,
+                    customerEmail: order.customerEmail,
+                    customerPhone: order.customerPhone
+                },
+                orderId: order.id,
+                targetTab: 'orders',
+                dedupeKey: `ORDER_CREATED:${order.id}`
+            });
+        } catch (error) {
+            logNotificationFailure('ORDER_CREATED', error, { orderId: order.id, source: 'checkout' });
+        }
         await notifyClientOrderStatus({ orderId: order.id, status: order.status });
         const emailResult = await sendOrderConfirmationEmail(order);
         res.json(serializeOrder({ ...order, emailStatus: emailResult.status, emailError: emailResult.error }));
@@ -222,6 +310,8 @@ export const guestCheckout = async (req: Request, res: Response) => {
             email: req.body.email,
             phone: req.body.phone,
             paymentMethod: req.body.paymentMethod,
+            useLoyaltyPoints: req.body.useLoyaltyPoints,
+            couponCode: req.body.couponCode,
             customerReference: req.body.customerReference,
             paymentProof: req.body.paymentProof,
             idempotencyKey: req.body.idempotencyKey || req.headers['idempotency-key']?.toString(),
@@ -230,6 +320,25 @@ export const guestCheckout = async (req: Request, res: Response) => {
         });
 
         await notifyNewOrder(order);
+        try {
+            await notifyStaff({
+                type: 'ORDER_CREATED',
+                title: 'Nouvelle commande a traiter',
+                message: `La commande ${order.orderNumber} vient d'etre creee et attend un traitement.`,
+                metadata: {
+                    orderNumber: order.orderNumber,
+                    amount: order.amount,
+                    currency: order.currency,
+                    customerEmail: order.customerEmail,
+                    customerPhone: order.customerPhone
+                },
+                orderId: order.id,
+                targetTab: 'orders',
+                dedupeKey: `ORDER_CREATED:${order.id}`
+            });
+        } catch (error) {
+            logNotificationFailure('ORDER_CREATED', error, { orderId: order.id, source: 'guestCheckout' });
+        }
         await notifyClientOrderStatus({ orderId: order.id, status: order.status });
         const emailResult = await sendOrderConfirmationEmail(order);
         res.status(201).json(serializeOrder({ ...order, emailStatus: emailResult.status, emailError: emailResult.error }));
@@ -258,6 +367,8 @@ export const confirmCheckout = async (req: AuthRequest, res: Response) => {
             email: req.body.email || user?.email || '',
             phone: req.body.phone || user?.phone || '',
             paymentMethod: req.body.paymentMethod,
+            useLoyaltyPoints: req.body.useLoyaltyPoints,
+            couponCode: req.body.couponCode,
             customerReference: req.body.customerReference,
             paymentProof: req.body.paymentProof,
             idempotencyKey: req.body.idempotencyKey || req.headers['idempotency-key']?.toString(),
@@ -269,11 +380,48 @@ export const confirmCheckout = async (req: AuthRequest, res: Response) => {
 
         if (user) await clearUserCart(user.id);
         await notifyNewOrder(order);
+        try {
+            await notifyStaff({
+                type: 'ORDER_CREATED',
+                title: 'Nouvelle commande a traiter',
+                message: `La commande ${order.orderNumber} vient d'etre creee et attend un traitement.`,
+                metadata: {
+                    orderNumber: order.orderNumber,
+                    amount: order.amount,
+                    currency: order.currency,
+                    customerEmail: order.customerEmail,
+                    customerPhone: order.customerPhone
+                },
+                orderId: order.id,
+                targetTab: 'orders',
+                dedupeKey: `ORDER_CREATED:${order.id}`
+            });
+        } catch (error) {
+            logNotificationFailure('ORDER_CREATED', error, { orderId: order.id, source: 'confirmCheckout' });
+        }
         await notifyClientOrderStatus({ orderId: order.id, status: order.status });
         const emailResult = await sendOrderConfirmationEmail(order);
         res.status(201).json(serializeOrder({ ...order, emailStatus: emailResult.status, emailError: emailResult.error }));
     } catch (error) {
         res.status(400).json({ error: error instanceof Error ? error.message : 'Impossible de créer la commande.' });
+    }
+};
+
+export const validateCheckoutCoupon = async (req: Request, res: Response) => {
+    try {
+        const result = await validateCouponForSubtotal(req.body.couponCode, Number(req.body.subtotal || 0));
+        res.json({
+            valid: result.valid,
+            code: result.code,
+            type: result.type,
+            value: result.value,
+            subtotal: result.subtotal,
+            discountAmount: result.discountAmount,
+            finalSubtotal: result.finalSubtotal,
+            message: result.message
+        });
+    } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Impossible de valider ce code promo.' });
     }
 };
 
@@ -315,67 +463,26 @@ export const getMyOrders = async (req: AuthRequest, res: Response) => {
         },
         orderBy: { createdAt: 'desc' }
     });
-    res.json(orders.map((order) => serializeOrder(order)));
-};
 
-export const getMyNotifications = async (req: AuthRequest, res: Response) => {
-    const notifications = await prisma.clientNotification.findMany({
-        where: { userId: req.user?.id },
-        include: {
-            order: {
-                select: {
-                    orderNumber: true,
-                    status: true
-                }
+    const listingIds = Array.from(new Set(orders.flatMap((order) => order.items.map((item) => item.listingId))));
+    const reviews = listingIds.length > 0
+        ? await prisma.review.findMany({
+            where: {
+                userId: req.user?.id,
+                listingId: { in: listingIds }
             }
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 100
-    });
+        })
+        : [];
 
-    res.json(notifications.map(serializeClientNotification));
-};
+    const reviewByListingId = new Map(reviews.map((review) => [review.listingId, review]));
 
-export const markMyNotificationRead = async (req: AuthRequest, res: Response) => {
-    const notification = await prisma.clientNotification.findFirst({
-        where: {
-            id: req.params.notificationId,
-            userId: req.user?.id
-        }
-    });
-
-    if (!notification) {
-        return res.status(404).json({ error: 'Notification introuvable.' });
-    }
-
-    const updated = await prisma.clientNotification.update({
-        where: { id: notification.id },
-        data: { readAt: notification.readAt || new Date() },
-        include: {
-            order: {
-                select: {
-                    orderNumber: true,
-                    status: true
-                }
-            }
-        }
-    });
-
-    res.json(serializeClientNotification(updated));
-};
-
-export const markAllMyNotificationsRead = async (req: AuthRequest, res: Response) => {
-    await prisma.clientNotification.updateMany({
-        where: {
-            userId: req.user?.id,
-            readAt: null
-        },
-        data: {
-            readAt: new Date()
-        }
-    });
-
-    res.json({ success: true });
+    res.json(orders.map((order) => serializeOrder({
+        ...order,
+        items: order.items.map((item) => ({
+            ...item,
+            review: reviewByListingId.get(item.listingId) || null
+        }))
+    })));
 };
 
 export const trackOrder = async (req: AuthRequest, res: Response) => {
@@ -403,7 +510,7 @@ export const trackOrder = async (req: AuthRequest, res: Response) => {
         return res.status(403).json({ error: 'Verification requise pour consulter cette commande.' });
     }
 
-    res.json(serializeOrder(order));
+    res.json(serializeTrackedOrder(order));
 };
 
 export const getOrderDelivery = async (req: AuthRequest, res: Response) => {
@@ -421,7 +528,7 @@ export const getOrderDelivery = async (req: AuthRequest, res: Response) => {
 
     const ownerAllowed = req.user?.id && order.userId === req.user.id;
     const tokenAllowed = token && order.trackingTokenHash && hashToken(token) === order.trackingTokenHash;
-    const paymentApproved = order.payments.some((payment) => payment.status === 'APPROVED');
+    const paymentApproved = order.payments.some((payment) => payment.status === 'APPROVED' || payment.status === 'PAID');
     const canView = paymentApproved && order.status === 'DELIVERED' && order.deliveries.some((delivery) => delivery.status === 'SENT') && (ownerAllowed || tokenAllowed);
 
     if (!canView) return res.status(403).json({ error: 'La livraison est verrouillee jusqu’a validation et envoi.' });
@@ -458,4 +565,94 @@ export const getOrderDelivery = async (req: AuthRequest, res: Response) => {
                 viewedAt: delivery.viewedAt
             }))
     });
+};
+
+export const downloadOrderInvoicePdf = async (req: AuthRequest, res: Response) => {
+    try {
+        const order = await getInvoiceOrderById(req.params.id);
+        if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+
+        try {
+            assertInvoiceAccess(order, req.user || null);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Acces refuse.';
+            return res.status(message === 'Authentication required.' ? 401 : 403).json({ error: message });
+        }
+
+        const pdf = await generateInvoicePdfBufferForOrder(order.id);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${pdf.fileName}"`);
+        res.send(pdf.buffer);
+    } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Impossible de generer la facture.' });
+    }
+};
+
+export const submitOrderPaymentProof = async (req: AuthRequest, res: Response) => {
+    try {
+        const order = await submitPaymentProofForOrder({
+            orderNumber: req.params.orderNumber,
+            email: req.body.email,
+            userId: req.user?.id || null,
+            reference: req.body.reference,
+            proofUrl: req.body.proofUrl,
+            paymentMethod: req.body.paymentMethod,
+            proofMessage: req.body.proofMessage,
+            ...requestMeta(req)
+        });
+
+        const payment = [...(order.payments || [])]
+            .sort((a, b) => new Date(b.declaredAt || b.submittedAt || 0).getTime() - new Date(a.declaredAt || a.submittedAt || 0).getTime())[0];
+
+        try {
+            await notifyStaff({
+                type: 'SYSTEM',
+                title: 'Preuve de paiement recue',
+                message: `La commande ${order.orderNumber} a recu une preuve de paiement et attend une verification manuelle.`,
+                metadata: {
+                    orderNumber: order.orderNumber,
+                    amount: order.amount,
+                    currency: order.currency,
+                    paymentMethod: order.paymentMethod,
+                    reference: payment?.reference || payment?.customerReference || null,
+                    proofUrl: payment?.proofUrl || payment?.proofFileUrl || null,
+                    customerEmail: order.customerEmail,
+                    customerPhone: order.customerPhone
+                },
+                orderId: order.id,
+                targetTab: 'orders',
+                dedupeKey: `PAYMENT_PROOF_SUBMITTED:${order.id}:${payment?.id || 'latest'}`
+            });
+        } catch (error) {
+            logNotificationFailure('PAYMENT_PROOF_SUBMITTED', error, { orderId: order.id, source: 'submitOrderPaymentProof' });
+        }
+
+        try {
+            const result = await sendWhatsappWebhookEvent({
+                type: 'PAYMENT_PROOF_SUBMITTED',
+                orderNumber: order.orderNumber,
+                amount: order.amount,
+                currency: order.currency,
+                paymentMethod: order.paymentMethod,
+                customerEmail: order.customerEmail,
+                customerPhone: order.customerPhone,
+                reference: payment?.reference || payment?.customerReference || null,
+                proofUrl: payment?.proofUrl || payment?.proofFileUrl || null,
+                message: `Commande ${order.orderNumber}, preuve de paiement recuee. Montant ${order.amount.toFixed(2)} ${order.currency}, methode ${order.paymentMethod || 'non precisee'}.`
+            });
+
+            if (result.status === 'FAILED') {
+                logger.error({ orderId: order.id, orderNumber: order.orderNumber, error: result.error }, 'payment_proof_whatsapp_alert_failed');
+            }
+        } catch (error) {
+            logger.error({ orderId: order.id, orderNumber: order.orderNumber, err: error }, 'payment_proof_whatsapp_alert_failed');
+        }
+
+        await notifyClientOrderStatus({ orderId: order.id, status: order.status });
+        const statusContent = getOrderStatusNotificationContent(order.orderNumber, order.status);
+        await sendOrderStatusUpdateEmail(order, order.status, statusContent.message);
+        res.status(201).json(serializeOrder(order));
+    } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Impossible d envoyer la preuve de paiement.' });
+    }
 };

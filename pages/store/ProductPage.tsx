@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ChevronRight, ExternalLink, MessageCircle } from 'lucide-react';
 import ProductDescriptionCard from '../../components/store-client/ProductDescriptionCard';
 import ProductInfoModal from '../../components/store-client/ProductInfoModal';
 import ProductPriceCard from '../../components/store-client/ProductPriceCard';
@@ -9,9 +9,12 @@ import ProductBreadcrumb from '../../components/store-client/product/ProductBrea
 import ProductHero from '../../components/store-client/product/ProductHero';
 import ProductInfoHighlights from '../../components/store-client/product/ProductInfoHighlights';
 import ProductStickyMobileBar from '../../components/store-client/product/ProductStickyMobileBar';
+import ProductReviewsSection from '../../components/store-client/reviews/ProductReviewsSection';
 import { ProductInfoAction, StoreProductPageProps } from '../../components/store-client/product/types';
-import { ProductVariant } from '../../types';
+import { ProductVariant, Review, ReviewSummary } from '../../types';
+import { api } from '../../services/api';
 import { getListingFinalPrice } from '../../utils/pricing';
+import { buildStoreWhatsappUrl } from '../../utils/whatsapp';
 
 type ModalState = { title: string; content: string } | null;
 
@@ -22,9 +25,16 @@ const ProductPage: React.FC<StoreProductPageProps> = ({
   onSelectVariant,
   onAddToCart,
   onBuyNow,
-  navigateTo
+  navigateTo,
+  siteConfig
 }) => {
   const [modal, setModal] = useState<ModalState>(null);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewSummary, setReviewSummary] = useState<ReviewSummary>({
+    average: product.ratingAverage || 0,
+    count: product.ratingCount || 0
+  });
+  const [reviewsLoading, setReviewsLoading] = useState(false);
   const variants = product.variants || [];
   const selectedVariant: ProductVariant | undefined = variants.find((variant) => variant.id === selectedVariantId);
   const mobilePrice = selectedVariant?.price ?? getListingFinalPrice(product);
@@ -37,6 +47,10 @@ const ProductPage: React.FC<StoreProductPageProps> = ({
   const descriptionTags = [category?.name, product.game, platform]
     .filter((tag, index, items): tag is string => Boolean(tag) && items.indexOf(tag) === index)
     .slice(0, 3);
+  const productWhatsappLink = buildStoreWhatsappUrl(
+    siteConfig,
+    `Bonjour TuniBots, j'ai une question sur le produit ${product.title}.`
+  );
   const restrictionsContent =
     product.restrictionsContent ||
     (isGlobalRegion
@@ -59,6 +73,59 @@ const ProductPage: React.FC<StoreProductPageProps> = ({
       content: product.regionContent || `<p>Region: ${region}</p>`
     }
   ];
+
+  useEffect(() => {
+    let cancelled = false;
+    setReviewsLoading(true);
+
+    void api.getListingReviews(product.id, { limit: 10 }).then((response) => {
+      if (cancelled) return;
+      setReviews(response.items);
+      setReviewSummary(response.summary);
+    }).catch(() => {
+      if (cancelled) return;
+      setReviews([]);
+      setReviewSummary({
+        average: product.ratingAverage || 0,
+        count: product.ratingCount || 0
+      });
+    }).finally(() => {
+      if (!cancelled) setReviewsLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [product.id, product.ratingAverage, product.ratingCount]);
+
+  useEffect(() => {
+    const scriptId = `aggregate-rating-${product.id}`;
+    const existing = document.getElementById(scriptId);
+    if (existing) existing.remove();
+
+    if ((reviewSummary.count || 0) <= 0) return;
+
+    const script = document.createElement('script');
+    script.id = scriptId;
+    script.type = 'application/ld+json';
+    script.text = JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'Product',
+      name: product.title,
+      image: product.imageUrl ? [product.imageUrl] : [],
+      description: product.description,
+      aggregateRating: {
+        '@type': 'AggregateRating',
+        ratingValue: reviewSummary.average.toFixed(1),
+        reviewCount: reviewSummary.count
+      }
+    });
+    document.head.appendChild(script);
+
+    return () => {
+      script.remove();
+    };
+  }, [product.id, product.title, product.imageUrl, product.description, reviewSummary.average, reviewSummary.count]);
 
   return (
     <div className="relative left-1/2 w-screen -translate-x-1/2 bg-[var(--surface-page)] px-4 py-6 pb-28 text-[var(--text-strong)] md:px-6 lg:pb-8">
@@ -87,6 +154,21 @@ const ProductPage: React.FC<StoreProductPageProps> = ({
               </div>
             </div>
 
+            {productWhatsappLink && (
+              <div className="mt-5">
+                <a
+                  href={productWhatsappLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-black text-emerald-800 transition hover:bg-emerald-100"
+                >
+                  <MessageCircle size={16} />
+                  Question sur ce produit ?
+                  <ExternalLink size={15} />
+                </a>
+              </div>
+            )}
+
             <div className="mt-6 flex items-center justify-between border-t border-[var(--border-soft)] pt-5">
               <div />
               {variants.length > 0 && (
@@ -99,6 +181,7 @@ const ProductPage: React.FC<StoreProductPageProps> = ({
             <ProductVariations variants={variants} selectedVariantId={selectedVariantId} onSelect={onSelectVariant} />
             <ProductDescriptionCard title={product.title} description={product.description} tags={descriptionTags} />
             <ProductSystemRequirements product={product} />
+            <ProductReviewsSection reviews={reviews} summary={reviewSummary} isLoading={reviewsLoading} />
           </div>
 
           <ProductPriceCard

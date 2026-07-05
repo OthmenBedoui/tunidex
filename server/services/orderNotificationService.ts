@@ -1,9 +1,13 @@
 import prisma from '../prisma.js';
+import logger from '../logger.js';
+import { sendWhatsappWebhookEvent } from './whatsappBotService.js';
 
 const SITE_CONFIG_KEY = 'site';
 
 type OrderNotificationPayload = {
+  id?: string;
   orderNumber: string;
+  status?: string;
   amount: number;
   currency: string;
   customerFirstName: string;
@@ -59,6 +63,29 @@ export const notifyNewOrder = async (order: OrderNotificationPayload) => {
     jobs.push(postJson(config.whatsappNotificationWebhookUrl, { type: 'NEW_ORDER', message, order }));
   }
 
+  if (order.status === 'PAYMENT_UNDER_REVIEW') {
+    jobs.push(
+      sendWhatsappWebhookEvent({
+        type: 'ORDER_PAYMENT_UNDER_REVIEW',
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        amount: order.amount,
+        currency: order.currency,
+        paymentMethod: order.paymentMethod,
+        customerName: `${order.customerFirstName} ${order.customerLastName}`.trim() || 'Client',
+        customerEmail: order.customerEmail,
+        customerPhone: order.customerPhone,
+        items: order.items,
+        message
+      }).then((result) => {
+        if (result.status !== 'SENT') {
+          throw new Error(result.error || 'WhatsApp webhook failed.');
+        }
+      })
+    );
+  }
+
   if (config.messengerNotificationsEnabled && config.messengerNotificationWebhookUrl) {
     jobs.push(postJson(config.messengerNotificationWebhookUrl, { type: 'NEW_ORDER', message, order }));
   }
@@ -72,6 +99,8 @@ export const notifyNewOrder = async (order: OrderNotificationPayload) => {
 
   const results = await Promise.allSettled(jobs);
   results.forEach((result) => {
-    if (result.status === 'rejected') console.error('[order-notification] failed', result.reason);
+    if (result.status === 'rejected') {
+      logger.error({ err: result.reason, orderNumber: order.orderNumber }, 'order_notification_failed');
+    }
   });
 };

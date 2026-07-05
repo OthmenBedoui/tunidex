@@ -49,15 +49,16 @@ const iconMap = {
 
 const roleLabel = (role: UserRole) => {
   if (role === UserRole.ADMIN) return 'Administrateur';
-  if (role === UserRole.SUB_ADMIN) return 'Sous-admin';
-  if (role === UserRole.SELLER) return 'Vendeur';
+  if (role === UserRole.AGENT) return 'Agent';
+  if (role === UserRole.USER) return 'Utilisateur';
+  if (role === UserRole.GUEST) return 'Invité';
   return role;
 };
 
 const canSeeItem = (user: User, item: AdminNavItem) => {
   if (item.adminOnly) return user.role === UserRole.ADMIN;
   if (item.id === 'users') return user.role === UserRole.ADMIN;
-  if (item.staffOnly) return user.role === UserRole.ADMIN || user.role === UserRole.SUB_ADMIN;
+  if (item.staffOnly) return user.role === UserRole.ADMIN || user.role === UserRole.AGENT;
   return true;
 };
 

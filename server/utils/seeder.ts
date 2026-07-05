@@ -4,14 +4,12 @@ import { Prisma } from '@prisma/client';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { DEFAULT_EMAIL_TEMPLATES } from './email.js';
+import env from '../config/env.js';
+import { type Role } from '../constants/roles.js';
+import logger from '../logger.js';
 
 const SITE_CONFIG_KEY = 'site';
 const legacySiteConfigPath = path.join(process.cwd(), 'server', 'data', 'site-config.json');
-const DEFAULT_ADMIN_EMAIL = process.env.DEFAULT_ADMIN_EMAIL || 'admin@tunibots.com';
-const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'l$?oF&9/35W?';
-const DEFAULT_AGENT_EMAIL = process.env.DEFAULT_AGENT_EMAIL || 'agent@tunibots.com';
-const DEFAULT_AGENT_PASSWORD = process.env.DEFAULT_AGENT_PASSWORD || DEFAULT_ADMIN_PASSWORD;
-
 const defaultSiteConfig = {
   logoUrl: '',
   siteName: 'TuniBots',
@@ -50,8 +48,24 @@ const defaultSiteConfig = {
   footerEmail: 'support@tunibots.tn',
   footerPhone: '+216 00 000 000',
   footerWhatsapp: '+216 00 000 000',
+  whatsappContactNumber: '+216 00 000 000',
+  whatsappFloatingButtonEnabled: true,
   footerAddress: 'Tunis, Tunisie',
   footerCopyright: 'Tous droits réservés.',
+  cgvPageTitle: 'Conditions générales de vente',
+  cgvPageContent: '<p>Les commandes passées sur TuniBots concernent des produits et services digitaux. Le client doit vérifier la fiche produit, la compatibilité, la région et les conditions d’activation avant achat.</p>',
+  refundPageTitle: 'Politique de remboursement',
+  refundPageContent: '<p>Les produits digitaux déjà livrés, activés ou consultés peuvent devenir non remboursables.</p>',
+  howItWorksPageTitle: 'Comment ça marche',
+  howItWorksPageContent: '<p>Choisissez votre produit, confirmez votre commande, envoyez votre preuve de paiement si nécessaire, puis recevez votre livraison digitale.</p>',
+  faqPageTitle: 'Questions fréquentes',
+  faqPageIntro: 'Retrouvez ici les réponses rapides aux questions les plus fréquentes sur le paiement, la livraison et le support.',
+  faqItems: [
+    {
+      question: 'Combien de temps prend la vérification du paiement ?',
+      answer: '<p>La vérification manuelle prend généralement quelques heures.</p>'
+    }
+  ],
   seoTitle: 'TuniBots | Marketplace digitale en Tunisie',
   seoDescription: 'Achetez des produits digitaux, comptes, licences, abonnements et services numériques en Tunisie avec livraison rapide et support local.',
   seoKeywords: 'marketplace digitale tunisie, comptes gaming, abonnements, licences, services digitaux, TuniBots',
@@ -75,6 +89,8 @@ const defaultSiteConfig = {
   adminNotificationsEnabled: true,
   adminNotificationSound: true,
   adminNotificationPollSeconds: 15,
+  loyaltyPointsPerDinar: 10,
+  loyaltyMaxDiscountPercent: 25,
   whatsappNotificationsEnabled: false,
   whatsappNotificationWebhookUrl: '',
   telegramNotificationsEnabled: false,
@@ -103,9 +119,9 @@ const seedSiteConfig = async () => {
       ...defaultSiteConfig,
       ...JSON.parse(raw)
     };
-    console.log('⚙️ Migration configuration site JSON -> PostgreSQL...');
+    logger.info('site_config_json_migration_started');
   } catch {
-    console.log('⚙️ Création configuration site par défaut...');
+    logger.info('site_config_default_creation_started');
   }
 
   await prisma.siteConfig.create({
@@ -130,7 +146,7 @@ export const seedDatabase = async () => {
     }: {
       email: string;
       username: string;
-      role: string;
+      role: Role;
       subscriptionTier: string;
       avatarUrl: string;
       password: string;
@@ -146,7 +162,7 @@ export const seedDatabase = async () => {
       const hashedPwd = await bcrypt.hash(password, 10);
 
       if (!existing) {
-        console.log(`🛠️ Création ${role} (${email})...`);
+        logger.info({ role, email }, 'default_staff_account_creation_started');
         await prisma.user.create({
           data: {
             email,
@@ -181,26 +197,37 @@ export const seedDatabase = async () => {
     };
 
     // 1. Users (Admin & Agent)
-    await ensureStaffAccount({
-      email: DEFAULT_ADMIN_EMAIL,
-      username: "SuperAdmin",
-      role: "ADMIN",
-      subscriptionTier: "Elite",
-      avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Admin",
-      password: DEFAULT_ADMIN_PASSWORD
-    });
-    await ensureStaffAccount({
-      email: DEFAULT_AGENT_EMAIL,
-      username: "SupportAgent",
-      role: "AGENT",
-      subscriptionTier: "Pro",
-      avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Agent",
-      password: DEFAULT_AGENT_PASSWORD
-    });
+    if (env.isProduction) {
+      logger.info('production_detected_skipping_default_staff_seed');
+    } else {
+      if (env.defaultAdminEmail && env.defaultAdminPassword) {
+        await ensureStaffAccount({
+          email: env.defaultAdminEmail,
+          username: "SuperAdmin",
+          role: "ADMIN",
+          subscriptionTier: "Elite",
+          avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Admin",
+          password: env.defaultAdminPassword
+        });
+      } else {
+        logger.warn('default_admin_credentials_missing_seed_skipped');
+      }
+
+      if (env.defaultAgentEmail && env.defaultAgentPassword) {
+        await ensureStaffAccount({
+          email: env.defaultAgentEmail,
+          username: "SupportAgent",
+          role: "AGENT",
+          subscriptionTier: "Pro",
+          avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Agent",
+          password: env.defaultAgentPassword
+        });
+      }
+    }
 
     // 2. Categories & SubCategories
     if (await prisma.category.count() === 0) {
-        console.log("📦 Création Catégories & Sous-catégories...");
+        logger.info('default_categories_seed_started');
         const categoriesData = [
             { name: 'Monnaie Jeu', slug: 'game-coins', icon: 'Coins', gradient: 'bg-gradient-to-r from-yellow-500 to-amber-600', imageUrl: 'https://images.unsplash.com/photo-1628155930542-3c7a64e2c833?auto=format&fit=crop&q=80', description: 'Gold, Credits, Coins & Tokens', order: 1 },
             { name: 'Comptes', slug: 'accounts', icon: 'User', gradient: 'bg-gradient-to-r from-blue-600 to-indigo-700', imageUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&q=80', description: 'Comptes Haut Niveau & Smurfs', order: 2 },
@@ -240,9 +267,9 @@ export const seedDatabase = async () => {
     }
 
     // 3. Listings (Produits) - Removed for clean state
-    console.log("🚀 Catalogue prêt pour nouveaux produits.");
+    logger.info('catalog_ready_for_new_products');
 
     // 4. Analytics - Removed for clean state
-    console.log('✅ Base de données prête !');
-  } catch (e) { console.error("❌ Erreur seeding:", e); }
+    logger.info('database_ready');
+  } catch (e) { logger.error({ err: e }, 'database_seed_error'); }
 };

@@ -3,8 +3,10 @@ import { UserRole } from '../../types';
 export type AdminTab =
   | 'overview'
   | 'orders'
+  | 'reviews'
   | 'listings'
   | 'create'
+  | 'coupons'
   | 'users'
   | 'categories'
   | 'settings'
@@ -28,8 +30,10 @@ export type AdminNavItem = {
 export const ADMIN_TABS: AdminTab[] = [
   'overview',
   'orders',
+  'reviews',
   'listings',
   'create',
+  'coupons',
   'users',
   'categories',
   'settings',
@@ -44,8 +48,10 @@ export const ADMIN_TABS: AdminTab[] = [
 export const ADMIN_TAB_SLUGS: Record<AdminTab, string> = {
   overview: '',
   orders: 'orders',
+  reviews: 'reviews',
   listings: 'products',
   create: 'products/new',
+  coupons: 'coupons',
   users: 'users',
   categories: 'categories',
   settings: 'settings',
@@ -67,8 +73,10 @@ export const adminNavGroups: Array<{ label: string; items: AdminNavItem[] }> = [
     items: [
       { id: 'overview', label: 'Dashboard', icon: 'TrendingUp' },
       { id: 'orders', label: 'Commandes', icon: 'ShoppingCart' },
+      { id: 'reviews', label: 'Avis', icon: 'Star' },
       { id: 'listings', label: 'Produits', icon: 'Box' },
-      { id: 'create', label: 'Ajouter produit', icon: 'PlusCircle', cta: true }
+      { id: 'create', label: 'Ajouter produit', icon: 'PlusCircle', cta: true },
+      { id: 'coupons', label: 'Coupons', icon: 'TicketPercent' }
     ]
   },
   {
@@ -93,7 +101,7 @@ export const adminNavGroups: Array<{ label: string; items: AdminNavItem[] }> = [
   }
 ];
 
-const STAFF_ROLES = new Set<UserRole>([UserRole.ADMIN, UserRole.SUB_ADMIN, UserRole.SELLER]);
+const STAFF_ROLES = new Set<UserRole>([UserRole.ADMIN, UserRole.AGENT]);
 const ADMIN_ONLY_TABS = new Set<AdminTab>([
   'store-config',
   'customization',
@@ -111,7 +119,7 @@ export const isStaffAdminRole = (role: UserRole) => STAFF_ROLES.has(role);
 export const canAccessAdminTab = (role: UserRole, tab: AdminTab) => {
   if (ADMIN_ONLY_TABS.has(tab)) return role === UserRole.ADMIN;
   if (ADMIN_TABS_ONLY.has(tab)) return role === UserRole.ADMIN;
-  if (STAFF_TABS.has(tab)) return role === UserRole.ADMIN || role === UserRole.SUB_ADMIN;
+  if (STAFF_TABS.has(tab)) return role === UserRole.ADMIN || role === UserRole.AGENT;
   return isStaffAdminRole(role);
 };
 

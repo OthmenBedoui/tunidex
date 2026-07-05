@@ -5,8 +5,9 @@ import ProfileSecurityPanel from '../../components/store-client/account/ProfileS
 import ProfileSidebar from '../../components/store-client/account/ProfileSidebar';
 import { StoreProfilePageProps } from '../../components/store-client/account/types';
 import { api } from '../../services/api';
+import { handleApiError } from '../../utils/apiError';
 
-const ProfilePage: React.FC<StoreProfilePageProps> = ({ user, onUpdateUser, onDeleteAccountSuccess, navigateTo }) => {
+const ProfilePage: React.FC<StoreProfilePageProps> = ({ user, onUpdateUser, onDeleteAccountSuccess, navigateTo, onNotify }) => {
   const nameParts = (user.fullName || '').trim().split(' ').filter(Boolean);
   const [username, setUsername] = useState(user.username);
   const [firstName, setFirstName] = useState(nameParts[0] || '');
@@ -55,8 +56,14 @@ const ProfilePage: React.FC<StoreProfilePageProps> = ({ user, onUpdateUser, onDe
       setMessage({ type: 'success', text: 'Profil mis a jour avec succes !' });
       setPassword('');
       setConfirmPassword('');
-    } catch {
-      setMessage({ type: 'error', text: 'Erreur lors de la mise a jour du profil.' });
+    } catch (error) {
+      const text = handleApiError({
+        error,
+        fallbackMessage: 'Erreur lors de la mise a jour du profil.',
+        notify: onNotify,
+        logContext: 'Unable to update profile'
+      });
+      setMessage({ type: 'error', text });
     } finally {
       setIsLoading(false);
     }
@@ -66,8 +73,14 @@ const ProfilePage: React.FC<StoreProfilePageProps> = ({ user, onUpdateUser, onDe
     try {
       await api.sendVerificationEmail();
       setMessage({ type: 'success', text: 'Email de verification envoye !' });
-    } catch {
-      setMessage({ type: 'error', text: "Erreur lors de l'envoi de l'email." });
+    } catch (error) {
+      const text = handleApiError({
+        error,
+        fallbackMessage: "Erreur lors de l'envoi de l'email.",
+        notify: onNotify,
+        logContext: 'Unable to send verification email'
+      });
+      setMessage({ type: 'error', text });
     }
   };
 
@@ -82,8 +95,14 @@ const ProfilePage: React.FC<StoreProfilePageProps> = ({ user, onUpdateUser, onDe
     try {
       await api.requestEmailChange(normalizedNewEmail);
       setMessage({ type: 'success', text: 'Code envoye au nouveau email. Saisissez le code pour confirmer le changement.' });
-    } catch (err: unknown) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : "Impossible d'envoyer le code." });
+    } catch (error: unknown) {
+      const text = handleApiError({
+        error,
+        fallbackMessage: "Impossible d'envoyer le code.",
+        notify: onNotify,
+        logContext: 'Unable to request email change'
+      });
+      setMessage({ type: 'error', text });
     } finally {
       setIsEmailSending(false);
     }
@@ -103,8 +122,14 @@ const ProfilePage: React.FC<StoreProfilePageProps> = ({ user, onUpdateUser, onDe
       setNewEmail(updatedUser.email);
       setEmailOtp('');
       setMessage({ type: 'success', text: 'Adresse email mise a jour avec succes.' });
-    } catch (err: unknown) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Code OTP invalide ou expire.' });
+    } catch (error: unknown) {
+      const text = handleApiError({
+        error,
+        fallbackMessage: 'Code OTP invalide ou expire.',
+        notify: onNotify,
+        logContext: 'Unable to confirm email change'
+      });
+      setMessage({ type: 'error', text });
     } finally {
       setIsEmailConfirming(false);
     }
@@ -121,8 +146,14 @@ const ProfilePage: React.FC<StoreProfilePageProps> = ({ user, onUpdateUser, onDe
     try {
       await api.deleteAccount(deleteConfirmation);
       onDeleteAccountSuccess();
-    } catch (err: unknown) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Erreur lors de la suppression du compte.' });
+    } catch (error: unknown) {
+      const text = handleApiError({
+        error,
+        fallbackMessage: 'Erreur lors de la suppression du compte.',
+        notify: onNotify,
+        logContext: 'Unable to delete account'
+      });
+      setMessage({ type: 'error', text });
     } finally {
       setIsDeletingAccount(false);
     }

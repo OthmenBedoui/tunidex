@@ -3,11 +3,11 @@ import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import prisma from '../prisma.js';
+import env from '../config/env.js';
+import { issueAuthSession } from '../services/authTokenService.js';
+import { readSiteConfig } from '../services/siteConfigService.js';
 import { readEnvValues } from '../utils/authProviders.js';
-import { readSiteConfig } from './adminController.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'secret-key-g2g-tunisie';
-const SOCIAL_STATE_SECRET = process.env.AUTH_SECRET || process.env.JWT_SECRET || 'tunibots-social-state';
 const DEFAULT_REDIRECT_PATH = '/dashboard';
 
 type SupportedProvider = 'google' | 'apple';
@@ -22,7 +22,7 @@ type SocialProfile = {
 const getBaseUrl = async (req: Request) => {
   const config = await readSiteConfig().catch(() => null);
   const canonicalUrl = typeof config?.seoCanonicalUrl === 'string' ? config.seoCanonicalUrl.trim() : '';
-  const authUrl = typeof process.env.AUTH_URL === 'string' ? process.env.AUTH_URL.trim() : '';
+  const authUrl = env.authUrl.trim();
   const fromConfig = canonicalUrl || authUrl;
   if (fromConfig) return fromConfig.replace(/\/$/, '');
   return `${req.protocol}://${req.get('host')}`;
@@ -36,18 +36,15 @@ const sanitizeRedirectPath = (value: unknown) => {
 };
 
 const signState = (provider: SupportedProvider, nextPath: string) =>
-  jwt.sign({ provider, nextPath }, SOCIAL_STATE_SECRET, { expiresIn: '15m' });
+  jwt.sign({ provider, nextPath }, env.authSecret, { expiresIn: '15m' });
 
 const verifyState = (state: string, provider: SupportedProvider) => {
-  const payload = jwt.verify(state, SOCIAL_STATE_SECRET) as { provider?: string; nextPath?: string };
+  const payload = jwt.verify(state, env.authSecret) as { provider?: string; nextPath?: string };
   if (payload.provider !== provider) {
     throw new Error('Invalid OAuth state.');
   }
   return sanitizeRedirectPath(payload.nextPath);
 };
-
-const signAppToken = (userId: string, role: string) =>
-  jwt.sign({ id: userId, role }, JWT_SECRET);
 
 const slugFromEmail = (email: string) => email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 24) || 'user';
 
@@ -99,7 +96,7 @@ const upsertSocialUser = async (provider: SupportedProvider, profile: SocialProf
       email: profile.email,
       username: generatedUsername,
       password: passwordHash,
-      role: 'CLIENT',
+      role: 'USER',
       avatarUrl: profile.avatarUrl || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(profile.name || profile.email)}`,
       fullName: profile.name || null,
       emailVerified: true,
@@ -289,7 +286,7 @@ export const handleSocialAuthCallback = async (req: Request, res: Response) => {
       ? await exchangeGoogleCode(code, envValues)
       : await exchangeAppleCode(code, envValues);
     const user = await upsertSocialUser(provider, profile);
-    const token = signAppToken(user.id, user.role);
+    const { accessToken: token } = await issueAuthSession(req, res, { id: user.id, role: user.role });
     return res.redirect(buildCallbackRedirect(baseUrl, token, nextPath));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Social login failed.';

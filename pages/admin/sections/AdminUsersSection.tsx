@@ -1,13 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Edit, Loader2, Save, Shield, X } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Edit, Loader2, Save, Search, Shield, X } from 'lucide-react';
+import AdminTablePagination from '../../../components/admin/AdminTablePagination';
 import { api } from '../../../services/api';
-import { User, UserRole } from '../../../types';
+import { useAdminUsersPage } from '../../../src/hooks/useAdminUsersPage';
+import { queryKeys } from '../../../src/queryKeys';
+import { AdminUserListSort, User, UserRole } from '../../../types';
+import { handleApiError } from '../../../utils/apiError';
 
 const ROLE_BADGE_CLASS: Record<UserRole, string> = {
   [UserRole.GUEST]: 'bg-slate-100 text-slate-700',
-  [UserRole.CLIENT]: 'bg-slate-100 text-slate-700',
-  [UserRole.SELLER]: 'bg-blue-100 text-blue-700',
-  [UserRole.SUB_ADMIN]: 'bg-orange-100 text-orange-700',
+  [UserRole.USER]: 'bg-slate-100 text-slate-700',
+  [UserRole.AGENT]: 'bg-blue-100 text-blue-700',
   [UserRole.ADMIN]: 'bg-red-100 text-red-700'
 };
 
@@ -18,49 +22,36 @@ interface AdminUsersSectionProps {
 
 const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({ currentUserRole, onNotify }) => {
   const [view, setView] = useState<'all' | 'roles'>('all');
-  const [users, setUsers] = useState<User[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>('all');
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<AdminUserListSort>('newest');
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [editRole, setEditRole] = useState<UserRole>(UserRole.CLIENT);
+  const [editRole, setEditRole] = useState<UserRole>(UserRole.USER);
   const [editBalance, setEditBalance] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const queryClient = useQueryClient();
+  const usersQuery = useAdminUsersPage(
+    { page, limit, role: roleFilter, q: search, sort },
+    { enabled: currentUserRole === UserRole.ADMIN }
+  );
+  const users = useMemo(() => usersQuery.data?.items ?? [], [usersQuery.data?.items]);
+  const totalUsers = usersQuery.data?.total || 0;
 
   useEffect(() => {
-    if (currentUserRole !== UserRole.ADMIN) return;
-
-    let cancelled = false;
-
-    const loadUsers = async () => {
-      setIsLoading(true);
-      try {
-        const nextUsers = await api.getAllUsers();
-        if (!cancelled) {
-          setUsers(nextUsers);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          onNotify({
-            type: 'error',
-            title: 'Utilisateurs indisponibles',
-            message: error instanceof Error ? error.message : "Impossible de charger la liste des utilisateurs."
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    void loadUsers();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUserRole, onNotify]);
+    if (usersQuery.error) {
+      handleApiError({
+        error: usersQuery.error,
+        fallbackMessage: 'Impossible de charger la liste des utilisateurs.',
+        notify: (message) => onNotify({ type: 'error', title: 'Utilisateurs indisponibles', message }),
+        logContext: 'Unable to load paginated admin users'
+      });
+    }
+  }, [onNotify, usersQuery.error]);
 
   const countsByRole = useMemo(() => {
-    const roles = [UserRole.ADMIN, UserRole.SUB_ADMIN, UserRole.SELLER, UserRole.CLIENT];
+    const roles = [UserRole.ADMIN, UserRole.AGENT, UserRole.USER, UserRole.GUEST];
     return new Map(roles.map((role) => [role, users.filter((user) => user.role === role).length]));
   }, [users]);
 
@@ -78,9 +69,7 @@ const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({ currentUserRole, 
       const nextBalance = parseFloat(editBalance) || 0;
       await api.updateUserRole(editingUser.id, editRole);
       await api.updateUserBalance(editingUser.id, nextBalance);
-      setUsers((current) => current.map((user) => (
-        user.id === editingUser.id ? { ...user, role: editRole, balance: nextBalance } : user
-      )));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.adminUsers });
       setEditingUser(null);
       onNotify({
         type: 'success',
@@ -88,10 +77,11 @@ const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({ currentUserRole, 
         message: `${editingUser.username} a bien été modifié.`
       });
     } catch (error) {
-      onNotify({
-        type: 'error',
-        title: 'Mise à jour impossible',
-        message: error instanceof Error ? error.message : "Impossible d'enregistrer cet utilisateur."
+      handleApiError({
+        error,
+        fallbackMessage: "Impossible d'enregistrer cet utilisateur.",
+        notify: (message) => onNotify({ type: 'error', title: 'Mise à jour impossible', message }),
+        logContext: `Unable to update user ${editingUser.id}`
       });
     } finally {
       setIsSaving(false);
@@ -135,7 +125,56 @@ const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({ currentUserRole, 
           </div>
         </div>
 
-        {isLoading ? (
+        {view === 'all' && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="grid gap-4 xl:grid-cols-[1fr_auto_auto] xl:items-center">
+              <div className="relative">
+                <Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                <input
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setPage(1);
+                  }}
+                  placeholder="Rechercher par email ou pseudo..."
+                  className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm font-medium outline-none focus:border-indigo-500"
+                />
+              </div>
+              <select
+                value={sort}
+                onChange={(event) => {
+                  setSort(event.target.value as AdminUserListSort);
+                  setPage(1);
+                }}
+                className="h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 outline-none focus:border-indigo-500"
+              >
+                <option value="newest">Plus récents</option>
+                <option value="oldest">Plus anciens</option>
+                <option value="email-asc">Email A-Z</option>
+                <option value="email-desc">Email Z-A</option>
+                <option value="balance-desc">Solde décroissant</option>
+                <option value="balance-asc">Solde croissant</option>
+              </select>
+              <div className="flex flex-wrap gap-2">
+                {(['all', UserRole.ADMIN, UserRole.AGENT, UserRole.USER, UserRole.GUEST] as const).map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => {
+                      setRoleFilter(role);
+                      setPage(1);
+                    }}
+                    className={`h-10 rounded-xl px-4 text-xs font-black transition ${roleFilter === role ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                  >
+                    {role === 'all' ? 'Tous' : role}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {usersQuery.isLoading ? (
           <div className="flex items-center justify-center rounded-2xl border border-slate-200 bg-white p-10 text-slate-500">
             <Loader2 size={20} className="mr-3 animate-spin" />
             Chargement des utilisateurs...
@@ -177,13 +216,30 @@ const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({ currentUserRole, 
                       </td>
                     </tr>
                   ))}
+                  {users.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-400">
+                        Aucun utilisateur ne correspond aux filtres.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
+            <AdminTablePagination
+              page={page}
+              limit={limit}
+              total={totalUsers}
+              onPageChange={setPage}
+              onLimitChange={(nextLimit) => {
+                setLimit(nextLimit);
+                setPage(1);
+              }}
+            />
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-            {[UserRole.ADMIN, UserRole.SUB_ADMIN, UserRole.SELLER, UserRole.CLIENT].map((role) => (
+            {[UserRole.ADMIN, UserRole.AGENT, UserRole.USER, UserRole.GUEST].map((role) => (
               <div key={role} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between">
                   <div className={`rounded-xl p-3 ${role === UserRole.ADMIN ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-600'}`}>
@@ -194,8 +250,8 @@ const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({ currentUserRole, 
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-900">{role}</h3>
                 <p className="mt-1 text-xs text-slate-400">
                   {role === UserRole.ADMIN ? 'Accès total au système' :
-                    role === UserRole.SUB_ADMIN ? 'Gestion limitée' :
-                    role === UserRole.SELLER ? 'Gestion des produits' : 'Utilisateur final'}
+                    role === UserRole.AGENT ? 'Support et suivi opérationnel' :
+                    role === UserRole.USER ? 'Utilisateur authentifié' : 'Visiteur invité'}
                 </p>
               </div>
             ))}

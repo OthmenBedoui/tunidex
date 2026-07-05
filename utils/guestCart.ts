@@ -21,7 +21,8 @@ const readStoredCart = (): StoredGuestCartItem[] => {
         variantId: typeof item.variantId === 'string' ? item.variantId : undefined,
         quantity: item.quantity
       }));
-  } catch {
+  } catch (error) {
+    console.warn('Unable to read guest cart from localStorage.', error);
     return [];
   }
 };
